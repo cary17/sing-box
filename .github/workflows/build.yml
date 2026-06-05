@@ -2,6 +2,7 @@ name: Build reF1nd Sing-Box Docker Images
 
 on:
   schedule:
+    # 每4小时检测一次上游更新
     - cron: "0 */4 * * *"
   workflow_dispatch:
     inputs:
@@ -21,14 +22,17 @@ on:
           - testing
 
 env:
+  # 上游仓库配置
   UPSTREAM_REPO: "https://github.com/reF1nd/sing-box.git"
   UPSTREAM_STABLE_BRANCH: "reF1nd-stable"
   UPSTREAM_TESTING_BRANCH: "reF1nd-testing"
+  
+  # 镜像仓库配置
   GHCR_IMAGE: "ghcr.io/${{ github.repository_owner }}/sing-box"
   DOCKERHUB_IMAGE: "cary17/sing-box"
 
 jobs:
-  # ==================== 版本检测 ====================
+  # ==================== 检测版本 ====================
   check_versions:
     name: 检测上游版本
     runs-on: ubuntu-latest
@@ -46,6 +50,7 @@ jobs:
           COMMIT=$(git ls-remote ${{ env.UPSTREAM_REPO }} \
             refs/heads/${{ env.UPSTREAM_STABLE_BRANCH }} | awk '{print $1}')
           echo "commit=${COMMIT}" >> $GITHUB_OUTPUT
+          echo "稳定版最新 commit: ${COMMIT}"
           
       - name: 获取稳定版版本号
         id: stable_version
@@ -60,6 +65,7 @@ jobs:
             VERSION="stable-$(git rev-parse --short HEAD)"
           fi
           echo "version=${VERSION}" >> $GITHUB_OUTPUT
+          echo "稳定版版本号: ${VERSION}"
           
       - name: 检查稳定版是否需要构建
         id: stable_check
@@ -69,12 +75,19 @@ jobs:
              [[ "${{ github.event.inputs.branch }}" == "stable" ]] || \
              [[ "${{ github.event.inputs.branch }}" == "both" ]]; then
             NEED="true"
+            echo "强制构建稳定版"
           elif [[ -f ".last_stable_commit" ]]; then
             LAST=$(cat .last_stable_commit)
             CURRENT="${{ steps.stable_commit.outputs.commit }}"
-            [[ "$CURRENT" != "$LAST" ]] && NEED="true"
+            if [[ "$CURRENT" != "$LAST" ]]; then
+              NEED="true"
+              echo "检测到稳定版更新: ${CURRENT:0:8}"
+            else
+              echo "稳定版无更新"
+            fi
           else
             NEED="true"
+            echo "首次构建稳定版"
           fi
           echo "need_build=${NEED}" >> $GITHUB_OUTPUT
           
@@ -84,6 +97,7 @@ jobs:
           COMMIT=$(git ls-remote ${{ env.UPSTREAM_REPO }} \
             refs/heads/${{ env.UPSTREAM_TESTING_BRANCH }} | awk '{print $1}')
           echo "commit=${COMMIT}" >> $GITHUB_OUTPUT
+          echo "测试版最新 commit: ${COMMIT}"
           
       - name: 获取测试版版本号
         id: testing_version
@@ -98,6 +112,7 @@ jobs:
             VERSION="$(git rev-parse --short HEAD)"
           fi
           echo "version=${VERSION}" >> $GITHUB_OUTPUT
+          echo "测试版版本号: ${VERSION}"
           
       - name: 检查测试版是否需要构建
         id: testing_check
@@ -107,211 +122,35 @@ jobs:
              [[ "${{ github.event.inputs.branch }}" == "testing" ]] || \
              [[ "${{ github.event.inputs.branch }}" == "both" ]]; then
             NEED="true"
+            echo "强制构建测试版"
           elif [[ -f ".last_testing_commit" ]]; then
             LAST=$(cat .last_testing_commit)
             CURRENT="${{ steps.testing_commit.outputs.commit }}"
-            [[ "$CURRENT" != "$LAST" ]] && NEED="true"
+            if [[ "$CURRENT" != "$LAST" ]]; then
+              NEED="true"
+              echo "检测到测试版更新: ${CURRENT:0:8}"
+            else
+              echo "测试版无更新"
+            fi
           else
             NEED="true"
+            echo "首次构建测试版"
           fi
           echo "need_build=${NEED}" >> $GITHUB_OUTPUT
 
-  # ==================== 构建稳定版 - amd64 ====================
-  build_stable_amd64:
-    name: 构建稳定版 amd64
+  # ==================== 构建稳定版 ====================
+  build_stable:
+    name: 构建稳定版镜像
     runs-on: ubuntu-latest
     needs: check_versions
     if: needs.check_versions.outputs.stable_need_build == 'true'
     steps:
-      - name: 克隆代码
+      - name: 克隆上游代码
         run: |
+          echo "📦 克隆 ${{ env.UPSTREAM_STABLE_BRANCH }} 分支..."
           git clone --depth 1 --branch ${{ env.UPSTREAM_STABLE_BRANCH }} \
             ${{ env.UPSTREAM_REPO }} .
-          
-      - name: Setup Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: ~1.25.10
-          
-      - name: 编译二进制
-        run: |
-          VERSION="${{ needs.check_versions.outputs.stable_version }}"
-          
-          if [[ -f "release/DEFAULT_BUILD_TAGS_OTHERS" ]]; then
-            TAGS=$(cat release/DEFAULT_BUILD_TAGS_OTHERS)
-          else
-            TAGS="with_gvisor,with_quic,with_wireguard,with_utls,with_acme,with_clash_api,with_stdjson,with_dhcp,with_v2ray_api,with_lite,with_ech"
-          fi
-          
-          if [[ -f "release/LDFLAGS" ]]; then
-            LDFLAGS=$(cat release/LDFLAGS)
-          else
-            LDFLAGS="-extldflags '-static'"
-          fi
-          
-          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
-            go build -v -trimpath -o sing-box-amd64 \
-            -tags "${TAGS}" \
-            -ldflags "-X 'github.com/sagernet/sing-box/constant.Version=${VERSION}' ${LDFLAGS} -s -w -buildid=" \
-            ./cmd/sing-box
-          
-      - name: Setup Docker Buildx
-        uses: docker/setup-buildx-action@v3
-        
-      - name: Login to GHCR
-        uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.repository_owner }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-          
-      - name: Login to Docker Hub
-        uses: docker/login-action@v3
-        with:
-          username: cary17
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
-          
-      - name: 构建并推送镜像
-        run: |
-          VERSION="${{ needs.check_versions.outputs.stable_version }}"
-          
-          docker build \
-            --platform linux/amd64 \
-            --build-arg TARGETARCH=amd64 \
-            -t ${ARCH}-temp \
-            -f Dockerfile.binary .
-          
-          docker tag amd64-temp "${{ env.GHCR_IMAGE }}:${VERSION}-amd64"
-          docker push "${{ env.GHCR_IMAGE }}:${VERSION}-amd64"
-          
-          docker tag amd64-temp "cary17/sing-box:${VERSION}-amd64"
-          docker push "cary17/sing-box:${VERSION}-amd64"
-          
-      - name: 保存镜像标签
-        run: |
-          echo "STABLE_AMD64_DONE=true" >> $GITHUB_ENV
-
-  # ==================== 构建稳定版 - arm64（原生 ARM Runner）====================
-  build_stable_arm64:
-    name: 构建稳定版 arm64
-    runs-on: ubuntu-24.04-arm
-    needs: check_versions
-    if: needs.check_versions.outputs.stable_need_build == 'true'
-    steps:
-      - name: 克隆代码
-        run: |
-          git clone --depth 1 --branch ${{ env.UPSTREAM_STABLE_BRANCH }} \
-            ${{ env.UPSTREAM_REPO }} .
-          
-      - name: Setup Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: ~1.25.10
-          
-      - name: 编译二进制
-        run: |
-          VERSION="${{ needs.check_versions.outputs.stable_version }}"
-          
-          if [[ -f "release/DEFAULT_BUILD_TAGS_OTHERS" ]]; then
-            TAGS=$(cat release/DEFAULT_BUILD_TAGS_OTHERS)
-          else
-            TAGS="with_gvisor,with_quic,with_wireguard,with_utls,with_acme,with_clash_api,with_stdjson,with_dhcp,with_v2ray_api,with_lite,with_ech"
-          fi
-          
-          if [[ -f "release/LDFLAGS" ]]; then
-            LDFLAGS=$(cat release/LDFLAGS)
-          else
-            LDFLAGS="-extldflags '-static'"
-          fi
-          
-          CGO_ENABLED=0 GOOS=linux GOARCH=arm64 \
-            go build -v -trimpath -o sing-box-arm64 \
-            -tags "${TAGS}" \
-            -ldflags "-X 'github.com/sagernet/sing-box/constant.Version=${VERSION}' ${LDFLAGS} -s -w -buildid=" \
-            ./cmd/sing-box
-          
-      - name: Setup Docker Buildx
-        uses: docker/setup-buildx-action@v3
-        
-      - name: Login to GHCR
-        uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.repository_owner }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-          
-      - name: Login to Docker Hub
-        uses: docker/login-action@v3
-        with:
-          username: cary17
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
-          
-      - name: 构建并推送镜像
-        run: |
-          VERSION="${{ needs.check_versions.outputs.stable_version }}"
-          
-          docker build \
-            --platform linux/arm64 \
-            --build-arg TARGETARCH=arm64 \
-            -t arm64-temp \
-            -f Dockerfile.binary .
-          
-          docker tag arm64-temp "${{ env.GHCR_IMAGE }}:${VERSION}-arm64"
-          docker push "${{ env.GHCR_IMAGE }}:${VERSION}-arm64"
-          
-          docker tag arm64-temp "cary17/sing-box:${VERSION}-arm64"
-          docker push "cary17/sing-box:${VERSION}-arm64"
-          
-      - name: 保存镜像标签
-        run: |
-          echo "STABLE_ARM64_DONE=true" >> $GITHUB_ENV
-
-  # ==================== 构建稳定版 - 其他架构（使用 QEMU）====================
-  build_stable_other:
-    name: 构建稳定版 ${{ matrix.arch }}
-    runs-on: ubuntu-latest
-    needs: [check_versions, build_stable_amd64, build_stable_arm64]
-    if: needs.check_versions.outputs.stable_need_build == 'true'
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - { arch: 386, platform: linux/386, goarch: 386, goarm: "" }
-          - { arch: armv7, platform: linux/arm/v7, goarch: arm, goarm: "7" }
-          - { arch: armv6, platform: linux/arm/v6, goarch: arm, goarm: "6" }
-    steps:
-      - name: 克隆代码
-        run: |
-          git clone --depth 1 --branch ${{ env.UPSTREAM_STABLE_BRANCH }} \
-            ${{ env.UPSTREAM_REPO }} .
-          
-      - name: Setup Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: ~1.25.10
-          
-      - name: 编译二进制
-        run: |
-          VERSION="${{ needs.check_versions.outputs.stable_version }}"
-          
-          if [[ -f "release/DEFAULT_BUILD_TAGS_OTHERS" ]]; then
-            TAGS=$(cat release/DEFAULT_BUILD_TAGS_OTHERS)
-          else
-            TAGS="with_gvisor,with_quic,with_wireguard,with_utls,with_acme,with_clash_api,with_stdjson,with_dhcp,with_v2ray_api,with_lite,with_ech"
-          fi
-          
-          if [[ -f "release/LDFLAGS" ]]; then
-            LDFLAGS=$(cat release/LDFLAGS)
-          else
-            LDFLAGS="-extldflags '-static'"
-          fi
-          
-          GOARM="${{ matrix.goarm }}"
-          CGO_ENABLED=0 GOOS=linux GOARCH=${{ matrix.goarch }} GOARM=${GOARM} \
-            go build -v -trimpath -o sing-box-${{ matrix.arch }} \
-            -tags "${TAGS}" \
-            -ldflags "-X 'github.com/sagernet/sing-box/constant.Version=${VERSION}' ${LDFLAGS} -s -w -buildid=" \
-            ./cmd/sing-box
+          echo "✅ 代码克隆完成"
           
       - name: Setup Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -332,280 +171,58 @@ jobs:
           username: cary17
           password: ${{ secrets.DOCKERHUB_TOKEN }}
           
-      - name: 构建并推送镜像
+      - name: 构建并推送稳定版多架构镜像
         run: |
           VERSION="${{ needs.check_versions.outputs.stable_version }}"
-          ARCH="${{ matrix.arch }}"
+          echo "🔨 开始构建稳定版多架构镜像..."
+          echo "   版本: ${VERSION}"
+          echo "   架构: linux/amd64, linux/arm64, linux/386, linux/arm/v7, linux/arm/v6"
           
+          # 稳定版：推送版本标签 + latest 标签
           docker buildx build \
-            --platform ${{ matrix.platform }} \
-            --build-arg TARGETARCH=${ARCH} \
-            -t "${{ env.GHCR_IMAGE }}:${VERSION}-${ARCH}" \
-            -t "cary17/sing-box:${VERSION}-${ARCH}" \
+            --platform linux/amd64,linux/arm64,linux/386,linux/arm/v7,linux/arm/v6 \
+            -t "${{ env.GHCR_IMAGE }}:${VERSION}" \
+            -t "${{ env.GHCR_IMAGE }}:latest" \
+            -t "${{ env.DOCKERHUB_IMAGE }}:${VERSION}" \
+            -t "${{ env.DOCKERHUB_IMAGE }}:latest" \
             --push \
             -f Dockerfile.binary .
           
-      - name: 保存镜像标签
-        run: |
-          echo "STABLE_${ARCH}_DONE=true" >> $GITHUB_ENV
-
-  # ==================== 合并稳定版镜像 ====================
-  merge_stable:
-    name: 合并稳定版多架构镜像
-    runs-on: ubuntu-latest
-    needs: [build_stable_amd64, build_stable_arm64, build_stable_other]
-    if: needs.check_versions.outputs.stable_need_build == 'true'
-    steps:
-      - name: Setup Docker Buildx
-        uses: docker/setup-buildx-action@v3
-        
-      - name: Login to GHCR
-        uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.repository_owner }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-          
-      - name: Login to Docker Hub
-        uses: docker/login-action@v3
-        with:
-          username: cary17
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
-          
-      - name: 合并并推送 GHCR 镜像
-        run: |
-          VERSION="${{ needs.check_versions.outputs.stable_version }}"
-          
-          MANIFEST_ARGS=""
-          for ARCH in amd64 arm64 386 armv7 armv6; do
-            MANIFEST_ARGS="${MANIFEST_ARGS} ${{ env.GHCR_IMAGE }}:${VERSION}-${ARCH}"
-          done
-          
-          docker manifest create "${{ env.GHCR_IMAGE }}:${VERSION}" ${MANIFEST_ARGS}
-          docker manifest push "${{ env.GHCR_IMAGE }}:${VERSION}"
-          
-          docker manifest create "${{ env.GHCR_IMAGE }}:latest" ${MANIFEST_ARGS}
-          docker manifest push "${{ env.GHCR_IMAGE }}:latest"
-          
-          echo "✅ GHCR 稳定版推送完成"
-          
-      - name: 合并并推送 Docker Hub 镜像
-        run: |
-          VERSION="${{ needs.check_versions.outputs.stable_version }}"
-          
-          MANIFEST_ARGS=""
-          for ARCH in amd64 arm64 386 armv7 armv6; do
-            MANIFEST_ARGS="${MANIFEST_ARGS} cary17/sing-box:${VERSION}-${ARCH}"
-          done
-          
-          docker manifest create "cary17/sing-box:${VERSION}" ${MANIFEST_ARGS}
-          docker manifest push "cary17/sing-box:${VERSION}"
-          
-          docker manifest create "cary17/sing-box:latest" ${MANIFEST_ARGS}
-          docker manifest push "cary17/sing-box:latest"
-          
-          echo "✅ Docker Hub 稳定版推送完成"
+          echo "✅ 稳定版镜像推送完成"
+          echo "   ${{ env.GHCR_IMAGE }}:${VERSION}"
+          echo "   ${{ env.GHCR_IMAGE }}:latest"
+          echo "   ${{ env.DOCKERHUB_IMAGE }}:${VERSION}"
+          echo "   ${{ env.DOCKERHUB_IMAGE }}:latest"
           
       - name: 记录构建状态
         run: |
           echo "${{ needs.check_versions.outputs.stable_commit }}" > .last_stable_commit
+          echo "✅ 已记录稳定版构建 commit"
           
-      - name: 输出摘要
+      - name: 构建摘要
         run: |
           echo "## 🎉 稳定版构建完成" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "| 项目 | 信息 |" >> $GITHUB_STEP_SUMMARY
           echo "|------|------|" >> $GITHUB_STEP_SUMMARY
           echo "| 版本 | ${{ needs.check_versions.outputs.stable_version }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| 架构 | amd64, arm64, 386, arm/v7, arm/v6 |" >> $GITHUB_STEP_SUMMARY
           echo "| GHCR | \`${{ env.GHCR_IMAGE }}:${{ needs.check_versions.outputs.stable_version }}\` |" >> $GITHUB_STEP_SUMMARY
-          echo "| Docker Hub | \`cary17/sing-box:${{ needs.check_versions.outputs.stable_version }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Docker Hub | \`${{ env.DOCKERHUB_IMAGE }}:${{ needs.check_versions.outputs.stable_version }}\` |" >> $GITHUB_STEP_SUMMARY
 
-  # ==================== 构建测试版（简化版，复用稳定版逻辑）====================
-  build_testing_amd64:
-    name: 构建测试版 amd64
+  # ==================== 构建测试版 ====================
+  build_testing:
+    name: 构建测试版镜像
     runs-on: ubuntu-latest
     needs: check_versions
     if: needs.check_versions.outputs.testing_need_build == 'true'
     steps:
-      - name: 克隆代码
+      - name: 克隆上游代码
         run: |
+          echo "📦 克隆 ${{ env.UPSTREAM_TESTING_BRANCH }} 分支..."
           git clone --depth 1 --branch ${{ env.UPSTREAM_TESTING_BRANCH }} \
             ${{ env.UPSTREAM_REPO }} .
-          
-      - name: Setup Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: ~1.25.10
-          
-      - name: 编译二进制
-        run: |
-          VERSION="${{ needs.check_versions.outputs.testing_version }}"
-          
-          if [[ -f "release/DEFAULT_BUILD_TAGS_OTHERS" ]]; then
-            TAGS=$(cat release/DEFAULT_BUILD_TAGS_OTHERS)
-          else
-            TAGS="with_gvisor,with_quic,with_wireguard,with_utls,with_acme,with_clash_api,with_stdjson,with_dhcp,with_v2ray_api,with_lite,with_ech"
-          fi
-          
-          if [[ -f "release/LDFLAGS" ]]; then
-            LDFLAGS=$(cat release/LDFLAGS)
-          else
-            LDFLAGS="-extldflags '-static'"
-          fi
-          
-          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
-            go build -v -trimpath -o sing-box-amd64 \
-            -tags "${TAGS}" \
-            -ldflags "-X 'github.com/sagernet/sing-box/constant.Version=${VERSION}' ${LDFLAGS} -s -w -buildid=" \
-            ./cmd/sing-box
-          
-      - name: Setup Docker Buildx
-        uses: docker/setup-buildx-action@v3
-        
-      - name: Login to GHCR
-        uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.repository_owner }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-          
-      - name: Login to Docker Hub
-        uses: docker/login-action@v3
-        with:
-          username: cary17
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
-          
-      - name: 构建并推送镜像
-        run: |
-          VERSION="${{ needs.check_versions.outputs.testing_version }}"
-          
-          docker build \
-            --platform linux/amd64 \
-            --build-arg TARGETARCH=amd64 \
-            -t amd64-temp \
-            -f Dockerfile.binary .
-          
-          docker tag amd64-temp "${{ env.GHCR_IMAGE }}:${VERSION}-amd64"
-          docker push "${{ env.GHCR_IMAGE }}:${VERSION}-amd64"
-          
-          docker tag amd64-temp "cary17/sing-box:${VERSION}-amd64"
-          docker push "cary17/sing-box:${VERSION}-amd64"
-
-  build_testing_arm64:
-    name: 构建测试版 arm64
-    runs-on: ubuntu-24.04-arm
-    needs: check_versions
-    if: needs.check_versions.outputs.testing_need_build == 'true'
-    steps:
-      - name: 克隆代码
-        run: |
-          git clone --depth 1 --branch ${{ env.UPSTREAM_TESTING_BRANCH }} \
-            ${{ env.UPSTREAM_REPO }} .
-          
-      - name: Setup Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: ~1.25.10
-          
-      - name: 编译二进制
-        run: |
-          VERSION="${{ needs.check_versions.outputs.testing_version }}"
-          
-          if [[ -f "release/DEFAULT_BUILD_TAGS_OTHERS" ]]; then
-            TAGS=$(cat release/DEFAULT_BUILD_TAGS_OTHERS)
-          else
-            TAGS="with_gvisor,with_quic,with_wireguard,with_utls,with_acme,with_clash_api,with_stdjson,with_dhcp,with_v2ray_api,with_lite,with_ech"
-          fi
-          
-          if [[ -f "release/LDFLAGS" ]]; then
-            LDFLAGS=$(cat release/LDFLAGS)
-          else
-            LDFLAGS="-extldflags '-static'"
-          fi
-          
-          CGO_ENABLED=0 GOOS=linux GOARCH=arm64 \
-            go build -v -trimpath -o sing-box-arm64 \
-            -tags "${TAGS}" \
-            -ldflags "-X 'github.com/sagernet/sing-box/constant.Version=${VERSION}' ${LDFLAGS} -s -w -buildid=" \
-            ./cmd/sing-box
-          
-      - name: Setup Docker Buildx
-        uses: docker/setup-buildx-action@v3
-        
-      - name: Login to GHCR
-        uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.repository_owner }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-          
-      - name: Login to Docker Hub
-        uses: docker/login-action@v3
-        with:
-          username: cary17
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
-          
-      - name: 构建并推送镜像
-        run: |
-          VERSION="${{ needs.check_versions.outputs.testing_version }}"
-          
-          docker build \
-            --platform linux/arm64 \
-            --build-arg TARGETARCH=arm64 \
-            -t arm64-temp \
-            -f Dockerfile.binary .
-          
-          docker tag arm64-temp "${{ env.GHCR_IMAGE }}:${VERSION}-arm64"
-          docker push "${{ env.GHCR_IMAGE }}:${VERSION}-arm64"
-          
-          docker tag arm64-temp "cary17/sing-box:${VERSION}-arm64"
-          docker push "cary17/sing-box:${VERSION}-arm64"
-
-  build_testing_other:
-    name: 构建测试版 ${{ matrix.arch }}
-    runs-on: ubuntu-latest
-    needs: [check_versions, build_testing_amd64, build_testing_arm64]
-    if: needs.check_versions.outputs.testing_need_build == 'true'
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - { arch: 386, platform: linux/386, goarch: 386, goarm: "" }
-          - { arch: armv7, platform: linux/arm/v7, goarch: arm, goarm: "7" }
-          - { arch: armv6, platform: linux/arm/v6, goarch: arm, goarm: "6" }
-    steps:
-      - name: 克隆代码
-        run: |
-          git clone --depth 1 --branch ${{ env.UPSTREAM_TESTING_BRANCH }} \
-            ${{ env.UPSTREAM_REPO }} .
-          
-      - name: Setup Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: ~1.25.10
-          
-      - name: 编译二进制
-        run: |
-          VERSION="${{ needs.check_versions.outputs.testing_version }}"
-          
-          if [[ -f "release/DEFAULT_BUILD_TAGS_OTHERS" ]]; then
-            TAGS=$(cat release/DEFAULT_BUILD_TAGS_OTHERS)
-          else
-            TAGS="with_gvisor,with_quic,with_wireguard,with_utls,with_acme,with_clash_api,with_stdjson,with_dhcp,with_v2ray_api,with_lite,with_ech"
-          fi
-          
-          if [[ -f "release/LDFLAGS" ]]; then
-            LDFLAGS=$(cat release/LDFLAGS)
-          else
-            LDFLAGS="-extldflags '-static'"
-          fi
-          
-          GOARM="${{ matrix.goarm }}"
-          CGO_ENABLED=0 GOOS=linux GOARCH=${{ matrix.goarch }} GOARM=${GOARM} \
-            go build -v -trimpath -o sing-box-${{ matrix.arch }} \
-            -tags "${TAGS}" \
-            -ldflags "-X 'github.com/sagernet/sing-box/constant.Version=${VERSION}' ${LDFLAGS} -s -w -buildid=" \
-            ./cmd/sing-box
+          echo "✅ 代码克隆完成"
           
       - name: Setup Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -626,79 +243,37 @@ jobs:
           username: cary17
           password: ${{ secrets.DOCKERHUB_TOKEN }}
           
-      - name: 构建并推送镜像
+      - name: 构建并推送测试版多架构镜像
         run: |
           VERSION="${{ needs.check_versions.outputs.testing_version }}"
-          ARCH="${{ matrix.arch }}"
+          echo "🔨 开始构建测试版多架构镜像..."
+          echo "   版本: ${VERSION}"
+          echo "   架构: linux/amd64, linux/arm64, linux/386, linux/arm/v7, linux/arm/v6"
           
+          # 测试版：只推送版本标签，不推送 latest
           docker buildx build \
-            --platform ${{ matrix.platform }} \
-            --build-arg TARGETARCH=${ARCH} \
-            -t "${{ env.GHCR_IMAGE }}:${VERSION}-${ARCH}" \
-            -t "cary17/sing-box:${VERSION}-${ARCH}" \
+            --platform linux/amd64,linux/arm64,linux/386,linux/arm/v7,linux/arm/v6 \
+            -t "${{ env.GHCR_IMAGE }}:${VERSION}" \
+            -t "${{ env.DOCKERHUB_IMAGE }}:${VERSION}" \
             --push \
             -f Dockerfile.binary .
-
-  merge_testing:
-    name: 合并测试版多架构镜像
-    runs-on: ubuntu-latest
-    needs: [build_testing_amd64, build_testing_arm64, build_testing_other]
-    if: needs.check_versions.outputs.testing_need_build == 'true'
-    steps:
-      - name: Setup Docker Buildx
-        uses: docker/setup-buildx-action@v3
-        
-      - name: Login to GHCR
-        uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.repository_owner }}
-          password: ${{ secrets.GITHUB_TOKEN }}
           
-      - name: Login to Docker Hub
-        uses: docker/login-action@v3
-        with:
-          username: cary17
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
-          
-      - name: 合并并推送 GHCR 测试版镜像
-        run: |
-          VERSION="${{ needs.check_versions.outputs.testing_version }}"
-          
-          MANIFEST_ARGS=""
-          for ARCH in amd64 arm64 386 armv7 armv6; do
-            MANIFEST_ARGS="${MANIFEST_ARGS} ${{ env.GHCR_IMAGE }}:${VERSION}-${ARCH}"
-          done
-          
-          docker manifest create "${{ env.GHCR_IMAGE }}:${VERSION}" ${MANIFEST_ARGS}
-          docker manifest push "${{ env.GHCR_IMAGE }}:${VERSION}"
-          
-          echo "✅ GHCR 测试版推送完成"
-          
-      - name: 合并并推送 Docker Hub 测试版镜像
-        run: |
-          VERSION="${{ needs.check_versions.outputs.testing_version }}"
-          
-          MANIFEST_ARGS=""
-          for ARCH in amd64 arm64 386 armv7 armv6; do
-            MANIFEST_ARGS="${MANIFEST_ARGS} cary17/sing-box:${VERSION}-${ARCH}"
-          done
-          
-          docker manifest create "cary17/sing-box:${VERSION}" ${MANIFEST_ARGS}
-          docker manifest push "cary17/sing-box:${VERSION}"
-          
-          echo "✅ Docker Hub 测试版推送完成"
+          echo "✅ 测试版镜像推送完成"
+          echo "   ${{ env.GHCR_IMAGE }}:${VERSION}"
+          echo "   ${{ env.DOCKERHUB_IMAGE }}:${VERSION}"
           
       - name: 记录构建状态
         run: |
           echo "${{ needs.check_versions.outputs.testing_commit }}" > .last_testing_commit
+          echo "✅ 已记录测试版构建 commit"
           
-      - name: 输出摘要
+      - name: 构建摘要
         run: |
           echo "## 🎉 测试版构建完成" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "| 项目 | 信息 |" >> $GITHUB_STEP_SUMMARY
           echo "|------|------|" >> $GITHUB_STEP_SUMMARY
           echo "| 版本 | ${{ needs.check_versions.outputs.testing_version }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| 架构 | amd64, arm64, 386, arm/v7, arm/v6 |" >> $GITHUB_STEP_SUMMARY
           echo "| GHCR | \`${{ env.GHCR_IMAGE }}:${{ needs.check_versions.outputs.testing_version }}\` |" >> $GITHUB_STEP_SUMMARY
-          echo "| Docker Hub | \`cary17/sing-box:${{ needs.check_versions.outputs.testing_version }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Docker Hub | \`${{ env.DOCKERHUB_IMAGE }}:${{ needs.check_versions.outputs.testing_version }}\` |" >> $GITHUB_STEP_SUMMARY
