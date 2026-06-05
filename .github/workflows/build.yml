@@ -172,11 +172,11 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
           
-      - name: 构建并推送多架构镜像
+      - name: 构建并推送稳定版镜像
         if: steps.check_update.outputs.need_build == 'true'
         run: |
           VERSION="${{ steps.version.outputs.version }}"
-          echo "🔨 开始构建多架构镜像..."
+          echo "🔨 开始构建稳定版镜像..."
           echo "   版本: ${VERSION}"
           
           # 架构映射
@@ -222,7 +222,7 @@ jobs:
           docker manifest create ${{ env.GHCR_IMAGE }}:${VERSION} ${MANIFEST_ARGS}
           docker manifest push ${{ env.GHCR_IMAGE }}:${VERSION}
           
-          # GHCR: latest 标签（稳定版）
+          # GHCR: latest 标签（仅稳定版）
           docker manifest create ${{ env.GHCR_IMAGE }}:latest ${MANIFEST_ARGS}
           docker manifest push ${{ env.GHCR_IMAGE }}:latest
           
@@ -236,7 +236,7 @@ jobs:
           docker manifest create ${{ env.DOCKERHUB_IMAGE }}:${VERSION} ${MANIFEST_ARGS}
           docker manifest push ${{ env.DOCKERHUB_IMAGE }}:${VERSION}
           
-          # Docker Hub: latest 标签（稳定版）
+          # Docker Hub: latest 标签（仅稳定版）
           docker manifest create ${{ env.DOCKERHUB_IMAGE }}:latest ${MANIFEST_ARGS}
           docker manifest push ${{ env.DOCKERHUB_IMAGE }}:latest
           
@@ -294,7 +294,7 @@ jobs:
           echo "COMMIT_HASH=${COMMIT}" >> $GITHUB_ENV
           echo "✅ 克隆完成，commit: ${COMMIT}"
           
-      - name: 获取版本号
+      - name: 获取版本号（测试版只去掉 -reF1nd，不添加额外标签）
         id: version
         if: steps.check_update.outputs.need_build == 'true'
         run: |
@@ -303,7 +303,7 @@ jobs:
             VERSION="$TAG"
             echo "🏷️ 使用 tag 版本: ${VERSION}"
           else
-            VERSION="testing-${COMMIT_HASH}"
+            VERSION="${COMMIT_HASH}"
             echo "🏷️ 使用 commit 版本: ${VERSION}"
           fi
           echo "version=${VERSION}" >> $GITHUB_OUTPUT
@@ -384,7 +384,7 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
           
-      - name: 构建并推送测试版镜像
+      - name: 构建并推送测试版镜像（只有版本标签）
         if: steps.check_update.outputs.need_build == 'true'
         run: |
           VERSION="${{ steps.version.outputs.version }}"
@@ -418,7 +418,7 @@ jobs:
             docker push ${{ env.DOCKERHUB_IMAGE }}:${VERSION}-${ARCH}
           done
           
-          # 创建 manifest（版本标签 + latest-beta 标签）
+          # 创建 manifest（只有版本标签，没有 latest 或 stable 标签）
           MANIFEST_ARGS=""
           for ARCH in amd64 arm64 386 armv7 armv6 ppc64le s390x; do
             MANIFEST_ARGS="${MANIFEST_ARGS} ${{ env.GHCR_IMAGE }}:${VERSION}-${ARCH}"
@@ -428,29 +428,18 @@ jobs:
           docker manifest create ${{ env.GHCR_IMAGE }}:${VERSION} ${MANIFEST_ARGS}
           docker manifest push ${{ env.GHCR_IMAGE }}:${VERSION}
           
-          # GHCR: latest-beta 标签
-          docker manifest create ${{ env.GHCR_IMAGE }}:latest-beta ${MANIFEST_ARGS}
-          docker manifest push ${{ env.GHCR_IMAGE }}:latest-beta
-          
-          # Docker Hub manifest
+          # Docker Hub: 版本标签
           MANIFEST_ARGS=""
           for ARCH in amd64 arm64 386 armv7 armv6 ppc64le s390x; do
             MANIFEST_ARGS="${MANIFEST_ARGS} ${{ env.DOCKERHUB_IMAGE }}:${VERSION}-${ARCH}"
           done
           
-          # Docker Hub: 版本标签
           docker manifest create ${{ env.DOCKERHUB_IMAGE }}:${VERSION} ${MANIFEST_ARGS}
           docker manifest push ${{ env.DOCKERHUB_IMAGE }}:${VERSION}
           
-          # Docker Hub: latest-beta 标签
-          docker manifest create ${{ env.DOCKERHUB_IMAGE }}:latest-beta ${MANIFEST_ARGS}
-          docker manifest push ${{ env.DOCKERHUB_IMAGE }}:latest-beta
-          
-          echo "✅ 测试版镜像推送完成"
+          echo "✅ 测试版镜像推送完成（仅版本标签）"
           echo "   ${{ env.GHCR_IMAGE }}:${VERSION}"
-          echo "   ${{ env.GHCR_IMAGE }}:latest-beta"
           echo "   ${{ env.DOCKERHUB_IMAGE }}:${VERSION}"
-          echo "   ${{ env.DOCKERHUB_IMAGE }}:latest-beta"
           
       - name: 记录构建状态
         if: steps.check_update.outputs.need_build == 'true'
