@@ -6,15 +6,13 @@
 
 ### GitHub Container Registry
 ```bash
-ghcr.io/你的用户名/sing-box:latest      # 稳定版最新
-ghcr.io/你的用户名/sing-box:stable      # 稳定版
-ghcr.io/你的用户名/sing-box:v1.10.0     # 稳定版特定版本
-ghcr.io/你的用户名/sing-box:v1.10.0-beta # 测试版特定版本
+ghcr.io/cary17/sing-box:latest      # 稳定版最新
+ghcr.io/cary17/sing-box:v1.10.0     # 稳定版特定版本
+ghcr.io/cary17/sing-box:v1.14.0-alpha.28 # 测试版特定版本
 
-
+docker pull cary17/sing-box:v1.14.0-alpha.28
 ### Docker Hub
 ```bash
-你的用户名/sing-box:latest
-你的用户名/sing-box:stable
-你的用户名/sing-box:v1.10.0
-你的用户名/sing-box:v1.10.0-beta
+cary17/sing-box:latest
+cary17/sing-box:v1.14.0-alpha.28
+cary17/sing-box:v1.14.0-alpha.28
