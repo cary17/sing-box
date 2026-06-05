@@ -110,12 +110,82 @@ jobs:
           echo "version=${VERSION}" >> $GITHUB_OUTPUT
           echo "VERSION=${VERSION}" >> $GITHUB_ENV
           
-      # 4. 设置 Docker Buildx
+      # 4. 设置 Go 环境
+      - name: Setup Go
+        if: steps.check_update.outputs.need_build == 'true'
+        uses: actions/setup-go@v5
+        with:
+          go-version: ~1.25.10
+          
+      # 5. 编译所有架构的二进制文件
+      - name: 编译二进制文件
+        if: steps.check_update.outputs.need_build == 'true'
+        run: |
+          echo "🔨 开始编译二进制文件..."
+          
+          VERSION="${{ steps.version.outputs.version }}"
+          
+          # 获取构建标签
+          if [[ -f "release/DEFAULT_BUILD_TAGS_OTHERS" ]]; then
+            TAGS=$(cat release/DEFAULT_BUILD_TAGS_OTHERS)
+          else
+            TAGS="with_gvisor,with_quic,with_wireguard,with_utls,with_acme,with_clash_api,with_stdjson,with_dhcp,with_v2ray_api,with_lite,with_ech"
+          fi
+          
+          # 获取链接标志
+          if [[ -f "release/LDFLAGS" ]]; then
+            LDFLAGS=$(cat release/LDFLAGS)
+          else
+            LDFLAGS="-extldflags '-static'"
+          fi
+          
+          # 定义需要编译的架构
+          declare -A ARCH_CONFIGS=(
+            ["amd64"]="linux/amd64||"
+            ["arm64"]="linux/arm64||"
+            ["386"]="linux/386||"
+            ["armv7"]="linux/arm/v7|arm|7"
+            ["armv6"]="linux/arm/v6|arm|6"
+            ["riscv64"]="linux/riscv64||"
+          )
+          
+          for ARCH in amd64 arm64 386 armv7 armv6 riscv64; do
+            echo "编译架构: ${ARCH}"
+            
+            CONFIG="${ARCH_CONFIGS[$ARCH]}"
+            PLATFORM=$(echo "$CONFIG" | cut -d'|' -f1)
+            GOARCH=$(echo "$CONFIG" | cut -d'|' -f2)
+            GOARM=$(echo "$CONFIG" | cut -d'|' -f3)
+            
+            if [[ -z "$GOARCH" ]]; then
+              GOARCH="$ARCH"
+            fi
+            
+            # 编译
+            CGO_ENABLED=0 GOOS=linux GOARCH=${GOARCH} GOARM=${GOARM} \
+              go build -v -trimpath -o sing-box-${ARCH} \
+              -tags "${TAGS}" \
+              -ldflags "-X 'github.com/sagernet/sing-box/constant.Version=${VERSION}' ${LDFLAGS} -s -w -buildid=" \
+              ./cmd/sing-box
+              
+            if [[ -f "sing-box-${ARCH}" ]]; then
+              echo "✅ 完成: sing-box-${ARCH}"
+              ls -la sing-box-${ARCH}
+            else
+              echo "❌ 失败: sing-box-${ARCH}"
+              exit 1
+            fi
+          done
+          
+          echo "📦 所有架构编译完成"
+          ls -la sing-box-*
+          
+      # 6. 设置 Docker Buildx
       - name: Setup Docker Buildx
         if: steps.check_update.outputs.need_build == 'true'
         uses: docker/setup-buildx-action@v3
         
-      # 5. 登录到 GHCR
+      # 7. 登录到 GHCR
       - name: Login to GHCR
         if: steps.check_update.outputs.need_build == 'true'
         uses: docker/login-action@v3
@@ -124,7 +194,7 @@ jobs:
           username: ${{ github.repository_owner }}
           password: ${{ secrets.GITHUB_TOKEN }}
           
-      # 6. 登录到 Docker Hub
+      # 8. 登录到 Docker Hub
       - name: Login to Docker Hub
         if: steps.check_update.outputs.need_build == 'true'
         uses: docker/login-action@v3
@@ -132,58 +202,113 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
           
-      # 7. 构建并推送多架构镜像
+      # 9. 构建并推送多架构镜像
       - name: 构建并推送镜像
         if: steps.check_update.outputs.need_build == 'true'
         run: |
+          VERSION="${{ steps.version.outputs.version }}"
           echo "🔨 开始构建多架构镜像..."
-          echo "   版本: ${{ steps.version.outputs.version }}"
-          echo "   目标: ${{ env.GHCR_IMAGE }}"
+          echo "   版本: ${VERSION}"
           
-          # 构建并推送多架构镜像
-          docker buildx build \
-            --platform linux/amd64,linux/arm64,linux/arm/v7,linux/386,linux/riscv64 \
-            -t ${{ env.GHCR_IMAGE }}:${{ steps.version.outputs.version }} \
-            -t ${{ env.GHCR_IMAGE }}:stable \
-            -t ${{ env.GHCR_IMAGE }}:latest \
-            --push \
-            -f Dockerfile.binary .
+          # 架构映射：本地文件名 -> Docker 平台
+          declare -A ARCH_MAP=(
+            ["amd64"]="linux/amd64"
+            ["arm64"]="linux/arm64"
+            ["386"]="linux/386"
+            ["armv7"]="linux/arm/v7"
+            ["armv6"]="linux/arm/v6"
+            ["riscv64"]="linux/riscv64"
+          )
+          
+          # 为每个架构构建镜像
+          for ARCH in amd64 arm64 386 armv7 armv6 riscv64; do
+            PLATFORM="${ARCH_MAP[$ARCH]}"
+            echo "构建 ${PLATFORM}..."
+            
+            # 使用 Dockerfile.binary 构建
+            docker build \
+              --platform ${PLATFORM} \
+              --build-arg TARGETARCH=${ARCH} \
+              -t ${ARCH}-temp \
+              -f Dockerfile.binary .
+              
+            # 标记并推送
+            docker tag ${ARCH}-temp ${{ env.GHCR_IMAGE }}:${VERSION}-${ARCH}
+            docker push ${{ env.GHCR_IMAGE }}:${VERSION}-${ARCH}
+            
+            echo "✅ ${PLATFORM} 完成"
+          done
+          
+          # 创建并推送 multi-arch manifest
+          echo "📦 创建 multi-arch manifest..."
+          
+          MANIFEST_ARGS=""
+          for ARCH in amd64 arm64 386 armv7 armv6 riscv64; do
+            MANIFEST_ARGS="${MANIFEST_ARGS} ${{ env.GHCR_IMAGE }}:${VERSION}-${ARCH}"
+          done
+          
+          # 版本标签
+          docker manifest create ${{ env.GHCR_IMAGE }}:${VERSION} ${MANIFEST_ARGS}
+          docker manifest push ${{ env.GHCR_IMAGE }}:${VERSION}
+          
+          # 稳定版标签
+          docker manifest create ${{ env.GHCR_IMAGE }}:stable ${MANIFEST_ARGS}
+          docker manifest push ${{ env.GHCR_IMAGE }}:stable
+          
+          # latest 标签
+          docker manifest create ${{ env.GHCR_IMAGE }}:latest ${MANIFEST_ARGS}
+          docker manifest push ${{ env.GHCR_IMAGE }}:latest
           
           echo "✅ GHCR 推送完成"
+          echo "   ${{ env.GHCR_IMAGE }}:${VERSION}"
+          echo "   ${{ env.GHCR_IMAGE }}:stable"
+          echo "   ${{ env.GHCR_IMAGE }}:latest"
           
-      # 8. 同步到 Docker Hub
+      # 10. 同步到 Docker Hub
       - name: 同步到 Docker Hub
         if: steps.check_update.outputs.need_build == 'true'
         run: |
           VERSION="${{ steps.version.outputs.version }}"
           echo "📤 同步到 Docker Hub..."
           
-          # 从 GHCR 拉取镜像
-          docker pull ${{ env.GHCR_IMAGE }}:${VERSION}
+          # 拉取并重新标记各架构镜像
+          for ARCH in amd64 arm64 386 armv7 armv6 riscv64; do
+            docker pull ${{ env.GHCR_IMAGE }}:${VERSION}-${ARCH}
+            docker tag ${{ env.GHCR_IMAGE }}:${VERSION}-${ARCH} ${{ env.DOCKERHUB_IMAGE }}:${VERSION}-${ARCH}
+            docker push ${{ env.DOCKERHUB_IMAGE }}:${VERSION}-${ARCH}
+          done
           
-          # 推送到 Docker Hub
-          docker tag ${{ env.GHCR_IMAGE }}:${VERSION} ${{ env.DOCKERHUB_IMAGE }}:${VERSION}
-          docker push ${{ env.DOCKERHUB_IMAGE }}:${VERSION}
+          # 创建 Docker Hub manifest
+          MANIFEST_ARGS=""
+          for ARCH in amd64 arm64 386 armv7 armv6 riscv64; do
+            MANIFEST_ARGS="${MANIFEST_ARGS} ${{ env.DOCKERHUB_IMAGE }}:${VERSION}-${ARCH}"
+          done
           
-          docker tag ${{ env.GHCR_IMAGE }}:${VERSION} ${{ env.DOCKERHUB_IMAGE }}:stable
-          docker push ${{ env.DOCKERHUB_IMAGE }}:stable
+          # 版本标签
+          docker manifest create ${{ env.DOCKERHUB_IMAGE }}:${VERSION} ${MANIFEST_ARGS}
+          docker manifest push ${{ env.DOCKERHUB_IMAGE }}:${VERSION}
           
-          docker tag ${{ env.GHCR_IMAGE }}:${VERSION} ${{ env.DOCKERHUB_IMAGE }}:latest
-          docker push ${{ env.DOCKERHUB_IMAGE }}:latest
+          # 稳定版标签
+          docker manifest create ${{ env.DOCKERHUB_IMAGE }}:stable ${MANIFEST_ARGS}
+          docker manifest push ${{ env.DOCKERHUB_IMAGE }}:stable
+          
+          # latest 标签
+          docker manifest create ${{ env.DOCKERHUB_IMAGE }}:latest ${MANIFEST_ARGS}
+          docker manifest push ${{ env.DOCKERHUB_IMAGE }}:latest
           
           echo "✅ Docker Hub 推送完成"
           echo "   ${{ env.DOCKERHUB_IMAGE }}:${VERSION}"
           echo "   ${{ env.DOCKERHUB_IMAGE }}:stable"
           echo "   ${{ env.DOCKERHUB_IMAGE }}:latest"
           
-      # 9. 记录构建状态
+      # 11. 记录构建状态
       - name: 记录构建状态
         if: steps.check_update.outputs.need_build == 'true'
         run: |
           echo "${{ steps.check_update.outputs.latest_commit }}" > .last_stable_commit
           echo "✅ 已记录构建 commit: ${{ steps.check_update.outputs.latest_commit }}"
           
-      # 10. 输出构建摘要
+      # 12. 输出构建摘要
       - name: 构建摘要
         if: steps.check_update.outputs.need_build == 'true'
         run: |
@@ -228,6 +353,7 @@ jobs:
           elif [[ "$LATEST_COMMIT" != "$LAST_COMMIT" ]]; then
             echo "need_build=true" >> $GITHUB_OUTPUT
             echo "🆕 检测到更新: ${LATEST_COMMIT:0:8}"
+            echo "   上次构建: ${LAST_COMMIT:0:8}"
           else
             echo "need_build=false" >> $GITHUB_OUTPUT
             echo "✅ 无更新，跳过构建"
@@ -245,19 +371,17 @@ jobs:
           echo "COMMIT_HASH=${COMMIT}" >> $GITHUB_ENV
           echo "✅ 克隆完成，commit: ${COMMIT}"
           
-      # 3. 获取版本号（去掉 -reF1nd 后缀，不额外添加 testing 标签）
+      # 3. 获取版本号（去掉 -reF1nd 后缀）
       - name: 获取版本号
         id: version
         if: steps.check_update.outputs.need_build == 'true'
         run: |
-          # 尝试获取 tag 版本，去掉 -reF1nd 后缀
           TAG=$(git describe --tags --abbrev=0 2>/dev/null | sed 's/-reF1nd$//' || echo "")
           
           if [[ -n "$TAG" ]]; then
             VERSION="$TAG"
             echo "🏷️ 使用 tag 版本: ${VERSION}"
           else
-            # 没有 tag 时使用 commit hash
             VERSION="${COMMIT_HASH}"
             echo "🏷️ 使用 commit 版本: ${VERSION}"
           fi
@@ -265,12 +389,81 @@ jobs:
           echo "version=${VERSION}" >> $GITHUB_OUTPUT
           echo "VERSION=${VERSION}" >> $GITHUB_ENV
           
-      # 4. 设置 Docker Buildx
+      # 4. 设置 Go 环境
+      - name: Setup Go
+        if: steps.check_update.outputs.need_build == 'true'
+        uses: actions/setup-go@v5
+        with:
+          go-version: ~1.25.10
+          
+      # 5. 编译所有架构的二进制文件
+      - name: 编译二进制文件
+        if: steps.check_update.outputs.need_build == 'true'
+        run: |
+          echo "🔨 开始编译测试版二进制文件..."
+          
+          VERSION="${{ steps.version.outputs.version }}"
+          
+          # 获取构建标签
+          if [[ -f "release/DEFAULT_BUILD_TAGS_OTHERS" ]]; then
+            TAGS=$(cat release/DEFAULT_BUILD_TAGS_OTHERS)
+          else
+            TAGS="with_gvisor,with_quic,with_wireguard,with_utls,with_acme,with_clash_api,with_stdjson,with_dhcp,with_v2ray_api,with_lite,with_ech"
+          fi
+          
+          # 获取链接标志
+          if [[ -f "release/LDFLAGS" ]]; then
+            LDFLAGS=$(cat release/LDFLAGS)
+          else
+            LDFLAGS="-extldflags '-static'"
+          fi
+          
+          # 定义需要编译的架构
+          declare -A ARCH_CONFIGS=(
+            ["amd64"]="linux/amd64||"
+            ["arm64"]="linux/arm64||"
+            ["386"]="linux/386||"
+            ["armv7"]="linux/arm/v7|arm|7"
+            ["armv6"]="linux/arm/v6|arm|6"
+            ["riscv64"]="linux/riscv64||"
+          )
+          
+          for ARCH in amd64 arm64 386 armv7 armv6 riscv64; do
+            echo "编译架构: ${ARCH}"
+            
+            CONFIG="${ARCH_CONFIGS[$ARCH]}"
+            GOARCH=$(echo "$CONFIG" | cut -d'|' -f2)
+            GOARM=$(echo "$CONFIG" | cut -d'|' -f3)
+            
+            if [[ -z "$GOARCH" ]]; then
+              GOARCH="$ARCH"
+            fi
+            
+            # 编译
+            CGO_ENABLED=0 GOOS=linux GOARCH=${GOARCH} GOARM=${GOARM} \
+              go build -v -trimpath -o sing-box-${ARCH} \
+              -tags "${TAGS}" \
+              -ldflags "-X 'github.com/sagernet/sing-box/constant.Version=${VERSION}' ${LDFLAGS} -s -w -buildid=" \
+              ./cmd/sing-box
+              
+            if [[ -f "sing-box-${ARCH}" ]]; then
+              echo "✅ 完成: sing-box-${ARCH}"
+              ls -la sing-box-${ARCH}
+            else
+              echo "❌ 失败: sing-box-${ARCH}"
+              exit 1
+            fi
+          done
+          
+          echo "📦 所有架构编译完成"
+          ls -la sing-box-*
+          
+      # 6. 设置 Docker Buildx
       - name: Setup Docker Buildx
         if: steps.check_update.outputs.need_build == 'true'
         uses: docker/setup-buildx-action@v3
         
-      # 5. 登录到 GHCR
+      # 7. 登录到 GHCR
       - name: Login to GHCR
         if: steps.check_update.outputs.need_build == 'true'
         uses: docker/login-action@v3
@@ -279,7 +472,7 @@ jobs:
           username: ${{ github.repository_owner }}
           password: ${{ secrets.GITHUB_TOKEN }}
           
-      # 6. 登录到 Docker Hub
+      # 8. 登录到 Docker Hub
       - name: Login to Docker Hub
         if: steps.check_update.outputs.need_build == 'true'
         uses: docker/login-action@v3
@@ -287,44 +480,87 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
           
-      # 7. 构建并推送镜像（测试版只打版本标签，不打 testing 标签）
+      # 9. 构建并推送镜像（测试版只有版本标签）
       - name: 构建并推送镜像
         if: steps.check_update.outputs.need_build == 'true'
         run: |
+          VERSION="${{ steps.version.outputs.version }}"
           echo "🔨 开始构建测试版镜像..."
-          echo "   版本: ${{ steps.version.outputs.version }}"
+          echo "   版本: ${VERSION}"
           
-          docker buildx build \
-            --platform linux/amd64,linux/arm64,linux/arm/v7,linux/386,linux/riscv64 \
-            -t ${{ env.GHCR_IMAGE }}:${{ steps.version.outputs.version }} \
-            --push \
-            -f Dockerfile.binary .
+          # 架构映射
+          declare -A ARCH_MAP=(
+            ["amd64"]="linux/amd64"
+            ["arm64"]="linux/arm64"
+            ["386"]="linux/386"
+            ["armv7"]="linux/arm/v7"
+            ["armv6"]="linux/arm/v6"
+            ["riscv64"]="linux/riscv64"
+          )
+          
+          # 为每个架构构建镜像
+          for ARCH in amd64 arm64 386 armv7 armv6 riscv64; do
+            PLATFORM="${ARCH_MAP[$ARCH]}"
+            echo "构建 ${PLATFORM}..."
+            
+            docker build \
+              --platform ${PLATFORM} \
+              --build-arg TARGETARCH=${ARCH} \
+              -t ${ARCH}-temp \
+              -f Dockerfile.binary .
+              
+            docker tag ${ARCH}-temp ${{ env.GHCR_IMAGE }}:${VERSION}-${ARCH}
+            docker push ${{ env.GHCR_IMAGE }}:${VERSION}-${ARCH}
+            
+            echo "✅ ${PLATFORM} 完成"
+          done
+          
+          # 创建 multi-arch manifest（只有版本标签）
+          MANIFEST_ARGS=""
+          for ARCH in amd64 arm64 386 armv7 armv6 riscv64; do
+            MANIFEST_ARGS="${MANIFEST_ARGS} ${{ env.GHCR_IMAGE }}:${VERSION}-${ARCH}"
+          done
+          
+          docker manifest create ${{ env.GHCR_IMAGE }}:${VERSION} ${MANIFEST_ARGS}
+          docker manifest push ${{ env.GHCR_IMAGE }}:${VERSION}
           
           echo "✅ GHCR 推送完成"
+          echo "   ${{ env.GHCR_IMAGE }}:${VERSION}"
           
-      # 8. 同步到 Docker Hub（测试版只推版本标签）
+      # 10. 同步到 Docker Hub（测试版只有版本标签）
       - name: 同步到 Docker Hub
         if: steps.check_update.outputs.need_build == 'true'
         run: |
           VERSION="${{ steps.version.outputs.version }}"
           echo "📤 同步到 Docker Hub..."
           
-          docker pull ${{ env.GHCR_IMAGE }}:${VERSION}
+          # 拉取并重新标记各架构镜像
+          for ARCH in amd64 arm64 386 armv7 armv6 riscv64; do
+            docker pull ${{ env.GHCR_IMAGE }}:${VERSION}-${ARCH}
+            docker tag ${{ env.GHCR_IMAGE }}:${VERSION}-${ARCH} ${{ env.DOCKERHUB_IMAGE }}:${VERSION}-${ARCH}
+            docker push ${{ env.DOCKERHUB_IMAGE }}:${VERSION}-${ARCH}
+          done
           
-          docker tag ${{ env.GHCR_IMAGE }}:${VERSION} ${{ env.DOCKERHUB_IMAGE }}:${VERSION}
-          docker push ${{ env.DOCKERHUB_IMAGE }}:${VERSION}
+          # 创建 Docker Hub manifest
+          MANIFEST_ARGS=""
+          for ARCH in amd64 arm64 386 armv7 armv6 riscv64; do
+            MANIFEST_ARGS="${MANIFEST_ARGS} ${{ env.DOCKERHUB_IMAGE }}:${VERSION}-${ARCH}"
+          done
+          
+          docker manifest create ${{ env.DOCKERHUB_IMAGE }}:${VERSION} ${MANIFEST_ARGS}
+          docker manifest push ${{ env.DOCKERHUB_IMAGE }}:${VERSION}
           
           echo "✅ Docker Hub 推送完成"
           echo "   ${{ env.DOCKERHUB_IMAGE }}:${VERSION}"
           
-      # 9. 记录构建状态
+      # 11. 记录构建状态
       - name: 记录构建状态
         if: steps.check_update.outputs.need_build == 'true'
         run: |
           echo "${{ steps.check_update.outputs.latest_commit }}" > .last_testing_commit
-          echo "✅ 已记录构建 commit"
+          echo "✅ 已记录构建 commit: ${{ steps.check_update.outputs.latest_commit }}"
           
-      # 10. 输出构建摘要
+      # 12. 输出构建摘要
       - name: 构建摘要
         if: steps.check_update.outputs.need_build == 'true'
         run: |
