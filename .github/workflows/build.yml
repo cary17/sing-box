@@ -174,12 +174,14 @@ jobs:
           
       - name: 构建并推送稳定版镜像
         if: steps.check_update.outputs.need_build == 'true'
+        env:
+          GHCR_IMAGE: ${{ env.GHCR_IMAGE }}
+          DOCKERHUB_IMAGE: ${{ env.DOCKERHUB_IMAGE }}
         run: |
           VERSION="${{ steps.version.outputs.version }}"
           echo "🔨 开始构建稳定版镜像..."
           echo "   版本: ${VERSION}"
           
-          # 架构映射
           declare -A ARCH_MAP=(
             ["amd64"]="linux/amd64"
             ["arm64"]="linux/arm64"
@@ -202,12 +204,14 @@ jobs:
               -f Dockerfile.binary .
             
             # 推送到 GHCR
-            docker tag ${ARCH}-temp ${{ env.GHCR_IMAGE }}:${VERSION}-${ARCH}
-            docker push ${{ env.GHCR_IMAGE }}:${VERSION}-${ARCH}
+            echo "推送到 GHCR: ${GHCR_IMAGE}:${VERSION}-${ARCH}"
+            docker tag ${ARCH}-temp "${GHCR_IMAGE}:${VERSION}-${ARCH}"
+            docker push "${GHCR_IMAGE}:${VERSION}-${ARCH}"
             
             # 推送到 Docker Hub
-            docker tag ${ARCH}-temp ${{ env.DOCKERHUB_IMAGE }}:${VERSION}-${ARCH}
-            docker push ${{ env.DOCKERHUB_IMAGE }}:${VERSION}-${ARCH}
+            echo "推送到 Docker Hub: ${DOCKERHUB_IMAGE}:${VERSION}-${ARCH}"
+            docker tag ${ARCH}-temp "${DOCKERHUB_IMAGE}:${VERSION}-${ARCH}"
+            docker push "${DOCKERHUB_IMAGE}:${VERSION}-${ARCH}"
             
             echo "✅ ${PLATFORM} 完成"
           done
@@ -215,36 +219,40 @@ jobs:
           # 创建 manifest 并推送
           MANIFEST_ARGS=""
           for ARCH in amd64 arm64 386 armv7 armv6 ppc64le s390x; do
-            MANIFEST_ARGS="${MANIFEST_ARGS} ${{ env.GHCR_IMAGE }}:${VERSION}-${ARCH}"
+            MANIFEST_ARGS="${MANIFEST_ARGS} ${GHCR_IMAGE}:${VERSION}-${ARCH}"
           done
           
           # GHCR: 版本标签
-          docker manifest create ${{ env.GHCR_IMAGE }}:${VERSION} ${MANIFEST_ARGS}
-          docker manifest push ${{ env.GHCR_IMAGE }}:${VERSION}
+          echo "创建 GHCR manifest: ${GHCR_IMAGE}:${VERSION}"
+          docker manifest create "${GHCR_IMAGE}:${VERSION}" ${MANIFEST_ARGS}
+          docker manifest push "${GHCR_IMAGE}:${VERSION}"
           
-          # GHCR: latest 标签（仅稳定版）
-          docker manifest create ${{ env.GHCR_IMAGE }}:latest ${MANIFEST_ARGS}
-          docker manifest push ${{ env.GHCR_IMAGE }}:latest
+          # GHCR: latest 标签
+          echo "创建 GHCR manifest: ${GHCR_IMAGE}:latest"
+          docker manifest create "${GHCR_IMAGE}:latest" ${MANIFEST_ARGS}
+          docker manifest push "${GHCR_IMAGE}:latest"
           
           # Docker Hub manifest
           MANIFEST_ARGS=""
           for ARCH in amd64 arm64 386 armv7 armv6 ppc64le s390x; do
-            MANIFEST_ARGS="${MANIFEST_ARGS} ${{ env.DOCKERHUB_IMAGE }}:${VERSION}-${ARCH}"
+            MANIFEST_ARGS="${MANIFEST_ARGS} ${DOCKERHUB_IMAGE}:${VERSION}-${ARCH}"
           done
           
           # Docker Hub: 版本标签
-          docker manifest create ${{ env.DOCKERHUB_IMAGE }}:${VERSION} ${MANIFEST_ARGS}
-          docker manifest push ${{ env.DOCKERHUB_IMAGE }}:${VERSION}
+          echo "创建 Docker Hub manifest: ${DOCKERHUB_IMAGE}:${VERSION}"
+          docker manifest create "${DOCKERHUB_IMAGE}:${VERSION}" ${MANIFEST_ARGS}
+          docker manifest push "${DOCKERHUB_IMAGE}:${VERSION}"
           
-          # Docker Hub: latest 标签（仅稳定版）
-          docker manifest create ${{ env.DOCKERHUB_IMAGE }}:latest ${MANIFEST_ARGS}
-          docker manifest push ${{ env.DOCKERHUB_IMAGE }}:latest
+          # Docker Hub: latest 标签
+          echo "创建 Docker Hub manifest: ${DOCKERHUB_IMAGE}:latest"
+          docker manifest create "${DOCKERHUB_IMAGE}:latest" ${MANIFEST_ARGS}
+          docker manifest push "${DOCKERHUB_IMAGE}:latest"
           
           echo "✅ 稳定版镜像推送完成"
-          echo "   ${{ env.GHCR_IMAGE }}:${VERSION}"
-          echo "   ${{ env.GHCR_IMAGE }}:latest"
-          echo "   ${{ env.DOCKERHUB_IMAGE }}:${VERSION}"
-          echo "   ${{ env.DOCKERHUB_IMAGE }}:latest"
+          echo "   ${GHCR_IMAGE}:${VERSION}"
+          echo "   ${GHCR_IMAGE}:latest"
+          echo "   ${DOCKERHUB_IMAGE}:${VERSION}"
+          echo "   ${DOCKERHUB_IMAGE}:latest"
           
       - name: 记录构建状态
         if: steps.check_update.outputs.need_build == 'true'
@@ -294,7 +302,7 @@ jobs:
           echo "COMMIT_HASH=${COMMIT}" >> $GITHUB_ENV
           echo "✅ 克隆完成，commit: ${COMMIT}"
           
-      - name: 获取版本号（测试版只去掉 -reF1nd，不添加额外标签）
+      - name: 获取版本号
         id: version
         if: steps.check_update.outputs.need_build == 'true'
         run: |
@@ -384,8 +392,11 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
           
-      - name: 构建并推送测试版镜像（只有版本标签）
+      - name: 构建并推送测试版镜像
         if: steps.check_update.outputs.need_build == 'true'
+        env:
+          GHCR_IMAGE: ${{ env.GHCR_IMAGE }}
+          DOCKERHUB_IMAGE: ${{ env.DOCKERHUB_IMAGE }}
         run: |
           VERSION="${{ steps.version.outputs.version }}"
           echo "🔨 开始构建测试版镜像..."
@@ -411,35 +422,42 @@ jobs:
               -t ${ARCH}-temp \
               -f Dockerfile.binary .
             
-            docker tag ${ARCH}-temp ${{ env.GHCR_IMAGE }}:${VERSION}-${ARCH}
-            docker push ${{ env.GHCR_IMAGE }}:${VERSION}-${ARCH}
+            echo "推送到 GHCR: ${GHCR_IMAGE}:${VERSION}-${ARCH}"
+            docker tag ${ARCH}-temp "${GHCR_IMAGE}:${VERSION}-${ARCH}"
+            docker push "${GHCR_IMAGE}:${VERSION}-${ARCH}"
             
-            docker tag ${ARCH}-temp ${{ env.DOCKERHUB_IMAGE }}:${VERSION}-${ARCH}
-            docker push ${{ env.DOCKERHUB_IMAGE }}:${VERSION}-${ARCH}
+            echo "推送到 Docker Hub: ${DOCKERHUB_IMAGE}:${VERSION}-${ARCH}"
+            docker tag ${ARCH}-temp "${DOCKERHUB_IMAGE}:${VERSION}-${ARCH}"
+            docker push "${DOCKERHUB_IMAGE}:${VERSION}-${ARCH}"
+            
+            echo "✅ ${PLATFORM} 完成"
           done
           
-          # 创建 manifest（只有版本标签，没有 latest 或 stable 标签）
+          # 创建 manifest（只有版本标签）
           MANIFEST_ARGS=""
           for ARCH in amd64 arm64 386 armv7 armv6 ppc64le s390x; do
-            MANIFEST_ARGS="${MANIFEST_ARGS} ${{ env.GHCR_IMAGE }}:${VERSION}-${ARCH}"
+            MANIFEST_ARGS="${MANIFEST_ARGS} ${GHCR_IMAGE}:${VERSION}-${ARCH}"
           done
           
           # GHCR: 版本标签
-          docker manifest create ${{ env.GHCR_IMAGE }}:${VERSION} ${MANIFEST_ARGS}
-          docker manifest push ${{ env.GHCR_IMAGE }}:${VERSION}
+          echo "创建 GHCR manifest: ${GHCR_IMAGE}:${VERSION}"
+          docker manifest create "${GHCR_IMAGE}:${VERSION}" ${MANIFEST_ARGS}
+          docker manifest push "${GHCR_IMAGE}:${VERSION}"
           
-          # Docker Hub: 版本标签
+          # Docker Hub manifest
           MANIFEST_ARGS=""
           for ARCH in amd64 arm64 386 armv7 armv6 ppc64le s390x; do
-            MANIFEST_ARGS="${MANIFEST_ARGS} ${{ env.DOCKERHUB_IMAGE }}:${VERSION}-${ARCH}"
+            MANIFEST_ARGS="${MANIFEST_ARGS} ${DOCKERHUB_IMAGE}:${VERSION}-${ARCH}"
           done
           
-          docker manifest create ${{ env.DOCKERHUB_IMAGE }}:${VERSION} ${MANIFEST_ARGS}
-          docker manifest push ${{ env.DOCKERHUB_IMAGE }}:${VERSION}
+          # Docker Hub: 版本标签
+          echo "创建 Docker Hub manifest: ${DOCKERHUB_IMAGE}:${VERSION}"
+          docker manifest create "${DOCKERHUB_IMAGE}:${VERSION}" ${MANIFEST_ARGS}
+          docker manifest push "${DOCKERHUB_IMAGE}:${VERSION}"
           
-          echo "✅ 测试版镜像推送完成（仅版本标签）"
-          echo "   ${{ env.GHCR_IMAGE }}:${VERSION}"
-          echo "   ${{ env.DOCKERHUB_IMAGE }}:${VERSION}"
+          echo "✅ 测试版镜像推送完成"
+          echo "   ${GHCR_IMAGE}:${VERSION}"
+          echo "   ${DOCKERHUB_IMAGE}:${VERSION}"
           
       - name: 记录构建状态
         if: steps.check_update.outputs.need_build == 'true'
