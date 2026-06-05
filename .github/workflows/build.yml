@@ -7,8 +7,8 @@ on:
     paths-ignore:
       - '.github/version/**'
   schedule:
-    # 每4小时检测一次上游更新
-    - cron: "0 */4 * * *"
+    # 北京时间每天早上8点执行 (UTC 0点)
+    - cron: "0 0 * * *"
   workflow_dispatch:
     inputs:
       force_build:
