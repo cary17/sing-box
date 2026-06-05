@@ -1,0 +1,339 @@
+name: Build reF1nd Sing-Box Docker Images
+
+on:
+  schedule:
+    # 每4小时检测一次上游更新
+    - cron: "0 */4 * * *"
+  workflow_dispatch:
+    inputs:
+      force_build:
+        description: "强制构建"
+        required: false
+        default: false
+        type: boolean
+      branch:
+        description: "选择分支"
+        required: false
+        default: "both"
+        type: choice
+        options:
+          - both
+          - stable
+          - testing
+
+env:
+  # 上游仓库配置
+  UPSTREAM_REPO: "https://github.com/reF1nd/sing-box.git"
+  UPSTREAM_STABLE_BRANCH: "reF1nd-stable"
+  UPSTREAM_TESTING_BRANCH: "reF1nd-testing"
+  
+  # 镜像仓库配置
+  GHCR_IMAGE: "ghcr.io/${{ github.repository_owner }}/sing-box"
+  DOCKERHUB_IMAGE: "${{ secrets.DOCKERHUB_USERNAME }}/sing-box"
+
+jobs:
+  # ==================== 构建稳定版 ====================
+  build_stable:
+    name: 构建稳定版镜像
+    runs-on: ubuntu-latest
+    if: |
+      github.event.inputs.branch == 'stable' || 
+      github.event.inputs.branch == 'both' || 
+      (github.event_name == 'schedule' && github.event.inputs.branch != 'testing')
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      built: ${{ steps.check_update.outputs.need_build }}
+    steps:
+      # 1. 检测上游是否有更新
+      - name: 检测上游更新
+        id: check_update
+        run: |
+          echo "🔍 检查上游 ${{ env.UPSTREAM_STABLE_BRANCH }} 分支..."
+          
+          # 获取上游最新 commit
+          LATEST_COMMIT=$(git ls-remote ${{ env.UPSTREAM_REPO }} \
+            refs/heads/${{ env.UPSTREAM_STABLE_BRANCH }} | awk '{print $1}')
+          echo "latest_commit=${LATEST_COMMIT}" >> $GITHUB_OUTPUT
+          
+          # 从缓存读取上次构建的 commit
+          if [[ -f ".last_stable_commit" ]]; then
+            LAST_COMMIT=$(cat .last_stable_commit)
+          else
+            LAST_COMMIT=""
+          fi
+          echo "last_commit=${LAST_COMMIT}" >> $GITHUB_OUTPUT
+          
+          # 判断是否需要构建
+          if [[ "${{ github.event.inputs.force_build }}" == "true" ]]; then
+            echo "need_build=true" >> $GITHUB_OUTPUT
+            echo "🔨 强制构建模式"
+          elif [[ "$LATEST_COMMIT" != "$LAST_COMMIT" ]]; then
+            echo "need_build=true" >> $GITHUB_OUTPUT
+            echo "🆕 检测到更新: ${LATEST_COMMIT:0:8}"
+            echo "   上次构建: ${LAST_COMMIT:0:8}"
+          else
+            echo "need_build=false" >> $GITHUB_OUTPUT
+            echo "✅ 无更新，跳过构建"
+          fi
+          
+      # 2. 克隆上游代码
+      - name: 克隆上游代码
+        if: steps.check_update.outputs.need_build == 'true'
+        run: |
+          echo "📦 克隆 ${{ env.UPSTREAM_STABLE_BRANCH }} 分支代码..."
+          git clone --depth 1 --branch ${{ env.UPSTREAM_STABLE_BRANCH }} \
+            ${{ env.UPSTREAM_REPO }} .
+          
+          COMMIT=$(git rev-parse --short HEAD)
+          echo "COMMIT_HASH=${COMMIT}" >> $GITHUB_ENV
+          echo "✅ 克隆完成，commit: ${COMMIT}"
+          
+          # 列出关键文件（确认代码拉取成功）
+          ls -la Dockerfile.binary release/ 2>/dev/null || echo "⚠️ 关键文件检查"
+          
+      # 3. 获取版本号（去掉 -reF1nd 后缀）
+      - name: 获取版本号
+        id: version
+        if: steps.check_update.outputs.need_build == 'true'
+        run: |
+          # 尝试获取 tag 版本，去掉 -reF1nd 后缀
+          TAG=$(git describe --tags --abbrev=0 2>/dev/null | sed 's/-reF1nd$//' || echo "")
+          
+          if [[ -n "$TAG" ]]; then
+            VERSION="$TAG"
+            echo "🏷️ 使用 tag 版本: ${VERSION}"
+          else
+            VERSION="stable-${COMMIT_HASH}"
+            echo "🏷️ 使用 commit 版本: ${VERSION}"
+          fi
+          
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+          echo "VERSION=${VERSION}" >> $GITHUB_ENV
+          
+      # 4. 设置 Docker Buildx
+      - name: Setup Docker Buildx
+        if: steps.check_update.outputs.need_build == 'true'
+        uses: docker/setup-buildx-action@v3
+        
+      # 5. 登录到 GHCR
+      - name: Login to GHCR
+        if: steps.check_update.outputs.need_build == 'true'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.repository_owner }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+          
+      # 6. 登录到 Docker Hub
+      - name: Login to Docker Hub
+        if: steps.check_update.outputs.need_build == 'true'
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+          
+      # 7. 构建并推送多架构镜像
+      - name: 构建并推送镜像
+        if: steps.check_update.outputs.need_build == 'true'
+        run: |
+          echo "🔨 开始构建多架构镜像..."
+          echo "   版本: ${{ steps.version.outputs.version }}"
+          echo "   目标: ${{ env.GHCR_IMAGE }}"
+          
+          # 构建并推送多架构镜像
+          docker buildx build \
+            --platform linux/amd64,linux/arm64,linux/arm/v7,linux/386,linux/riscv64 \
+            -t ${{ env.GHCR_IMAGE }}:${{ steps.version.outputs.version }} \
+            -t ${{ env.GHCR_IMAGE }}:stable \
+            -t ${{ env.GHCR_IMAGE }}:latest \
+            --push \
+            -f Dockerfile.binary .
+          
+          echo "✅ GHCR 推送完成"
+          
+      # 8. 同步到 Docker Hub
+      - name: 同步到 Docker Hub
+        if: steps.check_update.outputs.need_build == 'true'
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          echo "📤 同步到 Docker Hub..."
+          
+          # 从 GHCR 拉取镜像
+          docker pull ${{ env.GHCR_IMAGE }}:${VERSION}
+          
+          # 推送到 Docker Hub
+          docker tag ${{ env.GHCR_IMAGE }}:${VERSION} ${{ env.DOCKERHUB_IMAGE }}:${VERSION}
+          docker push ${{ env.DOCKERHUB_IMAGE }}:${VERSION}
+          
+          docker tag ${{ env.GHCR_IMAGE }}:${VERSION} ${{ env.DOCKERHUB_IMAGE }}:stable
+          docker push ${{ env.DOCKERHUB_IMAGE }}:stable
+          
+          docker tag ${{ env.GHCR_IMAGE }}:${VERSION} ${{ env.DOCKERHUB_IMAGE }}:latest
+          docker push ${{ env.DOCKERHUB_IMAGE }}:latest
+          
+          echo "✅ Docker Hub 推送完成"
+          echo "   ${{ env.DOCKERHUB_IMAGE }}:${VERSION}"
+          echo "   ${{ env.DOCKERHUB_IMAGE }}:stable"
+          echo "   ${{ env.DOCKERHUB_IMAGE }}:latest"
+          
+      # 9. 记录构建状态
+      - name: 记录构建状态
+        if: steps.check_update.outputs.need_build == 'true'
+        run: |
+          echo "${{ steps.check_update.outputs.latest_commit }}" > .last_stable_commit
+          echo "✅ 已记录构建 commit: ${{ steps.check_update.outputs.latest_commit }}"
+          
+      # 10. 输出构建摘要
+      - name: 构建摘要
+        if: steps.check_update.outputs.need_build == 'true'
+        run: |
+          echo "## 🎉 稳定版构建完成" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| 项目 | 信息 |" >> $GITHUB_STEP_SUMMARY
+          echo "|------|------|" >> $GITHUB_STEP_SUMMARY
+          echo "| 分支 | ${{ env.UPSTREAM_STABLE_BRANCH }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| 版本 | ${{ steps.version.outputs.version }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Commit | ${{ env.COMMIT_HASH }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| GHCR | \`${{ env.GHCR_IMAGE }}:${{ steps.version.outputs.version }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Docker Hub | \`${{ env.DOCKERHUB_IMAGE }}:${{ steps.version.outputs.version }}\` |" >> $GITHUB_STEP_SUMMARY
+
+  # ==================== 构建测试版 ====================
+  build_testing:
+    name: 构建测试版镜像
+    runs-on: ubuntu-latest
+    if: |
+      github.event.inputs.branch == 'testing' || 
+      github.event.inputs.branch == 'both' || 
+      github.event_name == 'schedule'
+    steps:
+      # 1. 检测上游是否有更新
+      - name: 检测上游更新
+        id: check_update
+        run: |
+          echo "🔍 检查上游 ${{ env.UPSTREAM_TESTING_BRANCH }} 分支..."
+          
+          LATEST_COMMIT=$(git ls-remote ${{ env.UPSTREAM_REPO }} \
+            refs/heads/${{ env.UPSTREAM_TESTING_BRANCH }} | awk '{print $1}')
+          echo "latest_commit=${LATEST_COMMIT}" >> $GITHUB_OUTPUT
+          
+          if [[ -f ".last_testing_commit" ]]; then
+            LAST_COMMIT=$(cat .last_testing_commit)
+          else
+            LAST_COMMIT=""
+          fi
+          
+          if [[ "${{ github.event.inputs.force_build }}" == "true" ]]; then
+            echo "need_build=true" >> $GITHUB_OUTPUT
+            echo "🔨 强制构建模式"
+          elif [[ "$LATEST_COMMIT" != "$LAST_COMMIT" ]]; then
+            echo "need_build=true" >> $GITHUB_OUTPUT
+            echo "🆕 检测到更新: ${LATEST_COMMIT:0:8}"
+          else
+            echo "need_build=false" >> $GITHUB_OUTPUT
+            echo "✅ 无更新，跳过构建"
+          fi
+          
+      # 2. 克隆上游代码
+      - name: 克隆上游代码
+        if: steps.check_update.outputs.need_build == 'true'
+        run: |
+          echo "📦 克隆 ${{ env.UPSTREAM_TESTING_BRANCH }} 分支代码..."
+          git clone --depth 1 --branch ${{ env.UPSTREAM_TESTING_BRANCH }} \
+            ${{ env.UPSTREAM_REPO }} .
+          
+          COMMIT=$(git rev-parse --short HEAD)
+          echo "COMMIT_HASH=${COMMIT}" >> $GITHUB_ENV
+          echo "✅ 克隆完成，commit: ${COMMIT}"
+          
+      # 3. 获取版本号（去掉 -reF1nd 后缀，不额外添加 testing 标签）
+      - name: 获取版本号
+        id: version
+        if: steps.check_update.outputs.need_build == 'true'
+        run: |
+          # 尝试获取 tag 版本，去掉 -reF1nd 后缀
+          TAG=$(git describe --tags --abbrev=0 2>/dev/null | sed 's/-reF1nd$//' || echo "")
+          
+          if [[ -n "$TAG" ]]; then
+            VERSION="$TAG"
+            echo "🏷️ 使用 tag 版本: ${VERSION}"
+          else
+            # 没有 tag 时使用 commit hash
+            VERSION="${COMMIT_HASH}"
+            echo "🏷️ 使用 commit 版本: ${VERSION}"
+          fi
+          
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+          echo "VERSION=${VERSION}" >> $GITHUB_ENV
+          
+      # 4. 设置 Docker Buildx
+      - name: Setup Docker Buildx
+        if: steps.check_update.outputs.need_build == 'true'
+        uses: docker/setup-buildx-action@v3
+        
+      # 5. 登录到 GHCR
+      - name: Login to GHCR
+        if: steps.check_update.outputs.need_build == 'true'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.repository_owner }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+          
+      # 6. 登录到 Docker Hub
+      - name: Login to Docker Hub
+        if: steps.check_update.outputs.need_build == 'true'
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+          
+      # 7. 构建并推送镜像（测试版只打版本标签，不打 testing 标签）
+      - name: 构建并推送镜像
+        if: steps.check_update.outputs.need_build == 'true'
+        run: |
+          echo "🔨 开始构建测试版镜像..."
+          echo "   版本: ${{ steps.version.outputs.version }}"
+          
+          docker buildx build \
+            --platform linux/amd64,linux/arm64,linux/arm/v7,linux/386,linux/riscv64 \
+            -t ${{ env.GHCR_IMAGE }}:${{ steps.version.outputs.version }} \
+            --push \
+            -f Dockerfile.binary .
+          
+          echo "✅ GHCR 推送完成"
+          
+      # 8. 同步到 Docker Hub（测试版只推版本标签）
+      - name: 同步到 Docker Hub
+        if: steps.check_update.outputs.need_build == 'true'
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          echo "📤 同步到 Docker Hub..."
+          
+          docker pull ${{ env.GHCR_IMAGE }}:${VERSION}
+          
+          docker tag ${{ env.GHCR_IMAGE }}:${VERSION} ${{ env.DOCKERHUB_IMAGE }}:${VERSION}
+          docker push ${{ env.DOCKERHUB_IMAGE }}:${VERSION}
+          
+          echo "✅ Docker Hub 推送完成"
+          echo "   ${{ env.DOCKERHUB_IMAGE }}:${VERSION}"
+          
+      # 9. 记录构建状态
+      - name: 记录构建状态
+        if: steps.check_update.outputs.need_build == 'true'
+        run: |
+          echo "${{ steps.check_update.outputs.latest_commit }}" > .last_testing_commit
+          echo "✅ 已记录构建 commit"
+          
+      # 10. 输出构建摘要
+      - name: 构建摘要
+        if: steps.check_update.outputs.need_build == 'true'
+        run: |
+          echo "## 🎉 测试版构建完成" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| 项目 | 信息 |" >> $GITHUB_STEP_SUMMARY
+          echo "|------|------|" >> $GITHUB_STEP_SUMMARY
+          echo "| 分支 | ${{ env.UPSTREAM_TESTING_BRANCH }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| 版本 | ${{ steps.version.outputs.version }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Commit | ${{ env.COMMIT_HASH }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| GHCR | \`${{ env.GHCR_IMAGE }}:${{ steps.version.outputs.version }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Docker Hub | \`${{ env.DOCKERHUB_IMAGE }}:${{ steps.version.outputs.version }}\` |" >> $GITHUB_STEP_SUMMARY
