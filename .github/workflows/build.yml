@@ -227,6 +227,7 @@ jobs:
           else
             git commit -m \
               "chore: update stable version [skip ci]"
+            git pull --rebase origin "${GITHUB_REF_NAME}"
             git push
           fi
           
@@ -317,6 +318,7 @@ jobs:
           else
             git commit -m \
               "chore: update testing version [skip ci]"
+            git pull --rebase origin "${GITHUB_REF_NAME}"
             git push
           fi
           
