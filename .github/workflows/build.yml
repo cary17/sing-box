@@ -1,6 +1,11 @@
 name: Build reF1nd Sing-Box Docker Images
 
 on:
+  push:
+    branches:
+      - main
+    paths-ignore:
+      - '.github/version/**'
   schedule:
     # 每4小时检测一次上游更新
     - cron: "0 */4 * * *"
@@ -20,6 +25,10 @@ on:
           - both
           - stable
           - testing
+
+permissions:
+  contents: write
+  packages: write
 
 env:
   # 上游仓库配置
@@ -41,17 +50,11 @@ jobs:
       testing_version: ${{ steps.testing_version.outputs.version }}
       stable_need_build: ${{ steps.stable_check.outputs.need_build }}
       testing_need_build: ${{ steps.testing_check.outputs.need_build }}
-      stable_commit: ${{ steps.stable_commit.outputs.commit }}
-      testing_commit: ${{ steps.testing_commit.outputs.commit }}
     steps:
-      - name: 获取稳定版信息
-        id: stable_commit
-        run: |
-          COMMIT=$(git ls-remote ${{ env.UPSTREAM_REPO }} \
-            refs/heads/${{ env.UPSTREAM_STABLE_BRANCH }} | awk '{print $1}')
-          echo "commit=${COMMIT}" >> $GITHUB_OUTPUT
-          echo "稳定版最新 commit: ${COMMIT}"
-          
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
       - name: 获取稳定版版本号
         id: stable_version
         run: |
@@ -66,39 +69,38 @@ jobs:
           fi
           echo "version=${VERSION}" >> $GITHUB_OUTPUT
           echo "稳定版版本号: ${VERSION}"
+
+      - name: 读取稳定版记录
+        id: stable_local
+        run: |
+          if [ -f .github/version/stable.txt ]; then
+            VERSION=$(cat .github/version/stable.txt)
+          else
+            VERSION=""
+          fi
+
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
           
       - name: 检查稳定版是否需要构建
         id: stable_check
         run: |
           NEED="false"
-          if [[ "${{ github.event.inputs.force_build }}" == "true" ]] || \
-             [[ "${{ github.event.inputs.branch }}" == "stable" ]] || \
-             [[ "${{ github.event.inputs.branch }}" == "both" ]]; then
+
+          CURRENT="${{ steps.stable_version.outputs.version }}"
+          LOCAL="${{ steps.stable_local.outputs.version }}"
+
+          if [[ "${{ github.event.inputs.force_build }}" == "true" ]]; then
             NEED="true"
-            echo "强制构建稳定版"
-          elif [[ -f ".last_stable_commit" ]]; then
-            LAST=$(cat .last_stable_commit)
-            CURRENT="${{ steps.stable_commit.outputs.commit }}"
-            if [[ "$CURRENT" != "$LAST" ]]; then
-              NEED="true"
-              echo "检测到稳定版更新: ${CURRENT:0:8}"
-            else
-              echo "稳定版无更新"
-            fi
-          else
+            echo "强制构建"
+          elif [[ "$CURRENT" != "$LOCAL" ]]; then
             NEED="true"
-            echo "首次构建稳定版"
+            echo "检测到新版本"
+            echo "远程: $CURRENT"
+            echo "本地: $LOCAL"
           fi
+
           echo "need_build=${NEED}" >> $GITHUB_OUTPUT
-          
-      - name: 获取测试版信息
-        id: testing_commit
-        run: |
-          COMMIT=$(git ls-remote ${{ env.UPSTREAM_REPO }} \
-            refs/heads/${{ env.UPSTREAM_TESTING_BRANCH }} | awk '{print $1}')
-          echo "commit=${COMMIT}" >> $GITHUB_OUTPUT
-          echo "测试版最新 commit: ${COMMIT}"
-          
+
       - name: 获取测试版版本号
         id: testing_version
         run: |
@@ -113,29 +115,36 @@ jobs:
           fi
           echo "version=${VERSION}" >> $GITHUB_OUTPUT
           echo "测试版版本号: ${VERSION}"
+
+      - name: 读取测试版记录
+        id: testing_local
+        run: |
+          if [ -f .github/version/testing.txt ]; then
+            VERSION=$(cat .github/version/testing.txt)
+          else
+            VERSION=""
+          fi
+
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
           
       - name: 检查测试版是否需要构建
         id: testing_check
         run: |
           NEED="false"
-          if [[ "${{ github.event.inputs.force_build }}" == "true" ]] || \
-             [[ "${{ github.event.inputs.branch }}" == "testing" ]] || \
-             [[ "${{ github.event.inputs.branch }}" == "both" ]]; then
+
+          CURRENT="${{ steps.testing_version.outputs.version }}"
+          LOCAL="${{ steps.testing_local.outputs.version }}"
+
+          if [[ "${{ github.event.inputs.force_build }}" == "true" ]]; then
             NEED="true"
-            echo "强制构建测试版"
-          elif [[ -f ".last_testing_commit" ]]; then
-            LAST=$(cat .last_testing_commit)
-            CURRENT="${{ steps.testing_commit.outputs.commit }}"
-            if [[ "$CURRENT" != "$LAST" ]]; then
-              NEED="true"
-              echo "检测到测试版更新: ${CURRENT:0:8}"
-            else
-              echo "测试版无更新"
-            fi
-          else
+            echo "强制构建"
+          elif [[ "$CURRENT" != "$LOCAL" ]]; then
             NEED="true"
-            echo "首次构建测试版"
+            echo "检测到新版本"
+            echo "远程: $CURRENT"
+            echo "本地: $LOCAL"
           fi
+
           echo "need_build=${NEED}" >> $GITHUB_OUTPUT
 
   # ==================== 构建稳定版 ====================
@@ -147,7 +156,7 @@ jobs:
     steps:
       - name: 克隆上游代码
         run: |
-          echo "📦 克隆 ${{ env.UPSTREAM_STABLE_BRANCH }} 分支..."
+          echo "📥 克隆 ${{ env.UPSTREAM_STABLE_BRANCH }} 分支..."
           git clone --depth 1 --branch ${{ env.UPSTREAM_STABLE_BRANCH }} \
             ${{ env.UPSTREAM_REPO }} .
           echo "✅ 代码克隆完成"
@@ -174,7 +183,7 @@ jobs:
       - name: 构建并推送稳定版多架构镜像
         run: |
           VERSION="${{ needs.check_versions.outputs.stable_version }}"
-          echo "🔨 开始构建稳定版多架构镜像..."
+          echo "🔧 开始构建稳定版多架构镜像..."
           echo "   版本: ${VERSION}"
           echo "   架构: linux/amd64, linux/arm64, linux/386, linux/arm/v7, linux/arm/v6"
           
@@ -186,18 +195,40 @@ jobs:
             -t "${{ env.DOCKERHUB_IMAGE }}:${VERSION}" \
             -t "${{ env.DOCKERHUB_IMAGE }}:latest" \
             --push \
-            -f Dockerfile.binary .
+            -f Dockerfile .
           
           echo "✅ 稳定版镜像推送完成"
           echo "   ${{ env.GHCR_IMAGE }}:${VERSION}"
           echo "   ${{ env.GHCR_IMAGE }}:latest"
           echo "   ${{ env.DOCKERHUB_IMAGE }}:${VERSION}"
           echo "   ${{ env.DOCKERHUB_IMAGE }}:latest"
-          
-      - name: 记录构建状态
+
+      - name: Checkout Current Repo
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 0
+
+      - name: 更新稳定版版本记录
         run: |
-          echo "${{ needs.check_versions.outputs.stable_commit }}" > .last_stable_commit
-          echo "✅ 已记录稳定版构建 commit"
+          mkdir -p .github/version
+
+          echo "${{ needs.check_versions.outputs.stable_version }}" \
+            > .github/version/stable.txt
+
+          git config user.name "github-actions[bot]"
+          git config user.email \
+            "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git add .github/version/stable.txt
+
+          if git diff --cached --quiet; then
+            echo "No changes"
+          else
+            git commit -m \
+              "chore: update stable version [skip ci]"
+            git push
+          fi
           
       - name: 构建摘要
         run: |
@@ -219,7 +250,7 @@ jobs:
     steps:
       - name: 克隆上游代码
         run: |
-          echo "📦 克隆 ${{ env.UPSTREAM_TESTING_BRANCH }} 分支..."
+          echo "📥 克隆 ${{ env.UPSTREAM_TESTING_BRANCH }} 分支..."
           git clone --depth 1 --branch ${{ env.UPSTREAM_TESTING_BRANCH }} \
             ${{ env.UPSTREAM_REPO }} .
           echo "✅ 代码克隆完成"
@@ -246,7 +277,7 @@ jobs:
       - name: 构建并推送测试版多架构镜像
         run: |
           VERSION="${{ needs.check_versions.outputs.testing_version }}"
-          echo "🔨 开始构建测试版多架构镜像..."
+          echo "🔧 开始构建测试版多架构镜像..."
           echo "   版本: ${VERSION}"
           echo "   架构: linux/amd64, linux/arm64, linux/386, linux/arm/v7, linux/arm/v6"
           
@@ -256,16 +287,38 @@ jobs:
             -t "${{ env.GHCR_IMAGE }}:${VERSION}" \
             -t "${{ env.DOCKERHUB_IMAGE }}:${VERSION}" \
             --push \
-            -f Dockerfile.binary .
+            -f Dockerfile .
           
           echo "✅ 测试版镜像推送完成"
           echo "   ${{ env.GHCR_IMAGE }}:${VERSION}"
           echo "   ${{ env.DOCKERHUB_IMAGE }}:${VERSION}"
-          
-      - name: 记录构建状态
+
+      - name: Checkout Current Repo
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 0
+
+      - name: 更新测试版版本记录
         run: |
-          echo "${{ needs.check_versions.outputs.testing_commit }}" > .last_testing_commit
-          echo "✅ 已记录测试版构建 commit"
+          mkdir -p .github/version
+
+          echo "${{ needs.check_versions.outputs.testing_version }}" \
+            > .github/version/testing.txt
+
+          git config user.name "github-actions[bot]"
+          git config user.email \
+            "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git add .github/version/testing.txt
+
+          if git diff --cached --quiet; then
+            echo "No changes"
+          else
+            git commit -m \
+              "chore: update testing version [skip ci]"
+            git push
+          fi
           
       - name: 构建摘要
         run: |
