@@ -1,11 +1,6 @@
 name: Build reF1nd Sing-Box Docker Images
 
 on:
-  push:
-    branches:
-      - main
-    paths-ignore:
-      - '.github/version/**'
   schedule:
     # 北京时间每天早上8点执行 (UTC 0点)
     - cron: "0 0 * * *"
