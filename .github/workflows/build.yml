@@ -2,8 +2,8 @@ name: Build reF1nd Sing-Box Docker Images
 
 on:
   schedule:
-    # 北京时间每天早上8点执行 (UTC 0点)
-    - cron: "0 0 * * *"
+    # Every 8 hours.
+    - cron: "0 */8 * * *"
   workflow_dispatch:
     inputs:
       force_build:
@@ -25,12 +25,16 @@ permissions:
   contents: write
   packages: write
 
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: false
+
 env:
   # 上游仓库配置
   UPSTREAM_REPO: "https://github.com/reF1nd/sing-box.git"
   UPSTREAM_STABLE_BRANCH: "reF1nd-stable"
   UPSTREAM_TESTING_BRANCH: "reF1nd-testing"
-  
+
   # 镜像仓库配置
   GHCR_IMAGE: "ghcr.io/${{ github.repository_owner }}/sing-box"
   DOCKERHUB_IMAGE: "cary17/sing-box"
@@ -42,11 +46,14 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       stable_version: ${{ steps.stable_version.outputs.version }}
+      stable_docker_tag: ${{ steps.stable_version.outputs.docker_tag }}
       testing_version: ${{ steps.testing_version.outputs.version }}
+      testing_docker_tag: ${{ steps.testing_version.outputs.docker_tag }}
       stable_need_build: ${{ steps.stable_check.outputs.need_build }}
       testing_need_build: ${{ steps.testing_check.outputs.need_build }}
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout Current Repo
+        uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
@@ -56,14 +63,19 @@ jobs:
           git clone --depth 1 --branch ${{ env.UPSTREAM_STABLE_BRANCH }} \
             ${{ env.UPSTREAM_REPO }} /tmp/stable
           cd /tmp/stable
-          TAG=$(git describe --tags --abbrev=0 2>/dev/null | sed 's/-reF1nd$//' || echo "")
+
+          TAG=$(git describe --tags --abbrev=0 2>/dev/null || true)
           if [[ -n "$TAG" ]]; then
             VERSION="$TAG"
           else
             VERSION="stable-$(git rev-parse --short HEAD)"
           fi
-          echo "version=${VERSION}" >> $GITHUB_OUTPUT
-          echo "稳定版版本号: ${VERSION}"
+          DOCKER_TAG="${VERSION%-reF1nd}"
+
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "docker_tag=${DOCKER_TAG}" >> "$GITHUB_OUTPUT"
+          echo "稳定版上游版本号: ${VERSION}"
+          echo "稳定版 Docker tag: ${DOCKER_TAG}"
 
       - name: 读取稳定版记录
         id: stable_local
@@ -74,27 +86,29 @@ jobs:
             VERSION=""
           fi
 
-          echo "version=${VERSION}" >> $GITHUB_OUTPUT
-          
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+
       - name: 检查稳定版是否需要构建
         id: stable_check
         run: |
           NEED="false"
-
+          SELECTED_BRANCH="${{ github.event.inputs.branch || 'both' }}"
           CURRENT="${{ steps.stable_version.outputs.version }}"
           LOCAL="${{ steps.stable_local.outputs.version }}"
 
-          if [[ "${{ github.event.inputs.force_build }}" == "true" ]]; then
+          if [[ "$SELECTED_BRANCH" != "both" && "$SELECTED_BRANCH" != "stable" ]]; then
+            echo "手动触发选择了 ${SELECTED_BRANCH}，跳过稳定版"
+          elif [[ "${{ github.event.inputs.force_build }}" == "true" ]]; then
             NEED="true"
-            echo "强制构建"
+            echo "强制构建稳定版"
           elif [[ "$CURRENT" != "$LOCAL" ]]; then
             NEED="true"
-            echo "检测到新版本"
+            echo "检测到稳定版新版本"
             echo "远程: $CURRENT"
             echo "本地: $LOCAL"
           fi
 
-          echo "need_build=${NEED}" >> $GITHUB_OUTPUT
+          echo "need_build=${NEED}" >> "$GITHUB_OUTPUT"
 
       - name: 获取测试版版本号
         id: testing_version
@@ -102,14 +116,19 @@ jobs:
           git clone --depth 1 --branch ${{ env.UPSTREAM_TESTING_BRANCH }} \
             ${{ env.UPSTREAM_REPO }} /tmp/testing
           cd /tmp/testing
-          TAG=$(git describe --tags --abbrev=0 2>/dev/null | sed 's/-reF1nd$//' || echo "")
+
+          TAG=$(git describe --tags --abbrev=0 2>/dev/null || true)
           if [[ -n "$TAG" ]]; then
             VERSION="$TAG"
           else
             VERSION="$(git rev-parse --short HEAD)"
           fi
-          echo "version=${VERSION}" >> $GITHUB_OUTPUT
-          echo "测试版版本号: ${VERSION}"
+          DOCKER_TAG="${VERSION%-reF1nd}"
+
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "docker_tag=${DOCKER_TAG}" >> "$GITHUB_OUTPUT"
+          echo "测试版上游版本号: ${VERSION}"
+          echo "测试版 Docker tag: ${DOCKER_TAG}"
 
       - name: 读取测试版记录
         id: testing_local
@@ -120,210 +139,290 @@ jobs:
             VERSION=""
           fi
 
-          echo "version=${VERSION}" >> $GITHUB_OUTPUT
-          
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+
       - name: 检查测试版是否需要构建
         id: testing_check
         run: |
           NEED="false"
-
+          SELECTED_BRANCH="${{ github.event.inputs.branch || 'both' }}"
           CURRENT="${{ steps.testing_version.outputs.version }}"
           LOCAL="${{ steps.testing_local.outputs.version }}"
 
-          if [[ "${{ github.event.inputs.force_build }}" == "true" ]]; then
+          if [[ "$SELECTED_BRANCH" != "both" && "$SELECTED_BRANCH" != "testing" ]]; then
+            echo "手动触发选择了 ${SELECTED_BRANCH}，跳过测试版"
+          elif [[ "${{ github.event.inputs.force_build }}" == "true" ]]; then
             NEED="true"
-            echo "强制构建"
+            echo "强制构建测试版"
           elif [[ "$CURRENT" != "$LOCAL" ]]; then
             NEED="true"
-            echo "检测到新版本"
+            echo "检测到测试版新版本"
             echo "远程: $CURRENT"
             echo "本地: $LOCAL"
           fi
 
-          echo "need_build=${NEED}" >> $GITHUB_OUTPUT
+          echo "need_build=${NEED}" >> "$GITHUB_OUTPUT"
 
   # ==================== 构建稳定版 ====================
   build_stable:
     name: 构建稳定版镜像
     runs-on: ubuntu-latest
     needs: check_versions
-    if: needs.check_versions.outputs.stable_need_build == 'true'
+    if: >-
+      needs.check_versions.outputs.stable_need_build == 'true' &&
+      (github.event_name != 'workflow_dispatch' || github.event.inputs.branch == 'both' || github.event.inputs.branch == 'stable')
     steps:
       - name: 克隆上游代码
         run: |
-          echo "📥 克隆 ${{ env.UPSTREAM_STABLE_BRANCH }} 分支..."
+          echo "克隆 ${{ env.UPSTREAM_STABLE_BRANCH }} 分支..."
           git clone --depth 1 --branch ${{ env.UPSTREAM_STABLE_BRANCH }} \
-            ${{ env.UPSTREAM_REPO }} .
-          echo "✅ 代码克隆完成"
-          
+            ${{ env.UPSTREAM_REPO }} src
+          echo "代码克隆完成"
+
       - name: Setup Docker Buildx
         uses: docker/setup-buildx-action@v3
-        
+
       - name: Setup QEMU
         uses: docker/setup-qemu-action@v3
-        
+
       - name: Login to GHCR
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: ${{ github.repository_owner }}
           password: ${{ secrets.GITHUB_TOKEN }}
-          
+
       - name: Login to Docker Hub
         uses: docker/login-action@v3
         with:
           username: cary17
           password: ${{ secrets.DOCKERHUB_TOKEN }}
-          
+
       - name: 构建并推送稳定版多架构镜像
         run: |
           VERSION="${{ needs.check_versions.outputs.stable_version }}"
-          echo "🔧 开始构建稳定版多架构镜像..."
-          echo "   版本: ${VERSION}"
+          DOCKER_TAG="${{ needs.check_versions.outputs.stable_docker_tag }}"
+          echo "开始构建稳定版多架构镜像..."
+          echo "   上游版本: ${VERSION}"
+          echo "   Docker tag: ${DOCKER_TAG}"
           echo "   架构: linux/amd64, linux/arm64, linux/386, linux/arm/v7, linux/arm/v6"
-          
-          # 稳定版：推送版本标签 + latest 标签
+
           docker buildx build \
             --platform linux/amd64,linux/arm64,linux/386,linux/arm/v7,linux/arm/v6 \
-            -t "${{ env.GHCR_IMAGE }}:${VERSION}" \
+            -t "${{ env.GHCR_IMAGE }}:${DOCKER_TAG}" \
             -t "${{ env.GHCR_IMAGE }}:latest" \
-            -t "${{ env.DOCKERHUB_IMAGE }}:${VERSION}" \
+            -t "${{ env.DOCKERHUB_IMAGE }}:${DOCKER_TAG}" \
             -t "${{ env.DOCKERHUB_IMAGE }}:latest" \
             --push \
-            -f Dockerfile .
-          
-          echo "✅ 稳定版镜像推送完成"
-          echo "   ${{ env.GHCR_IMAGE }}:${VERSION}"
+            -f src/Dockerfile src
+
+          echo "稳定版镜像推送完成"
+          echo "   ${{ env.GHCR_IMAGE }}:${DOCKER_TAG}"
           echo "   ${{ env.GHCR_IMAGE }}:latest"
-          echo "   ${{ env.DOCKERHUB_IMAGE }}:${VERSION}"
+          echo "   ${{ env.DOCKERHUB_IMAGE }}:${DOCKER_TAG}"
           echo "   ${{ env.DOCKERHUB_IMAGE }}:latest"
 
       - name: Checkout Current Repo
         uses: actions/checkout@v4
         with:
+          path: repo
           token: ${{ secrets.GITHUB_TOKEN }}
           fetch-depth: 0
 
       - name: 更新稳定版版本记录
+        working-directory: repo
         run: |
           mkdir -p .github/version
-
-          echo "${{ needs.check_versions.outputs.stable_version }}" \
-            > .github/version/stable.txt
+          echo "${{ needs.check_versions.outputs.stable_version }}" > .github/version/stable.txt
 
           git config user.name "github-actions[bot]"
-          git config user.email \
-            "41898282+github-actions[bot]@users.noreply.github.com"
-
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add .github/version/stable.txt
 
           if git diff --cached --quiet; then
             echo "No changes"
           else
-            git commit -m \
-              "chore: update stable version [skip ci]"
-            git pull --rebase origin "${GITHUB_REF_NAME}"
-            git push
+            git commit -m "chore: update stable version [skip ci]"
+            for attempt in 1 2 3; do
+              git pull --rebase origin "${GITHUB_REF_NAME}"
+              if git push; then
+                exit 0
+              fi
+              echo "Push failed, retrying (${attempt}/3)..."
+              sleep 5
+            done
+            exit 1
           fi
-          
+
+      - name: 检查稳定版版本记录
+        working-directory: repo
+        run: |
+          EXPECTED="${{ needs.check_versions.outputs.stable_version }}"
+          FILE=".github/version/stable.txt"
+
+          if [[ ! -f "$FILE" ]]; then
+            echo "版本记录文件不存在: $FILE"
+            exit 1
+          fi
+
+          ACTUAL=$(cat "$FILE")
+          if [[ "$ACTUAL" != "$EXPECTED" ]]; then
+            echo "版本记录不正确"
+            echo "期望: $EXPECTED"
+            echo "实际: $ACTUAL"
+            exit 1
+          fi
+
+          git fetch origin "${GITHUB_REF_NAME}:refs/remotes/origin/${GITHUB_REF_NAME}"
+          REMOTE=$(git show "origin/${GITHUB_REF_NAME}:${FILE}" 2>/dev/null || true)
+          if [[ "$REMOTE" != "$EXPECTED" ]]; then
+            echo "远端版本记录不正确"
+            echo "期望: $EXPECTED"
+            echo "远端: $REMOTE"
+            exit 1
+          fi
+
+          echo "稳定版版本记录校验通过: $EXPECTED"
+
       - name: 构建摘要
         run: |
-          echo "## 🎉 稳定版构建完成" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "| 项目 | 信息 |" >> $GITHUB_STEP_SUMMARY
-          echo "|------|------|" >> $GITHUB_STEP_SUMMARY
-          echo "| 版本 | ${{ needs.check_versions.outputs.stable_version }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| 架构 | amd64, arm64, 386, arm/v7, arm/v6 |" >> $GITHUB_STEP_SUMMARY
-          echo "| GHCR | \`${{ env.GHCR_IMAGE }}:${{ needs.check_versions.outputs.stable_version }}\` |" >> $GITHUB_STEP_SUMMARY
-          echo "| Docker Hub | \`${{ env.DOCKERHUB_IMAGE }}:${{ needs.check_versions.outputs.stable_version }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "## 稳定版构建完成" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "| 项目 | 信息 |" >> "$GITHUB_STEP_SUMMARY"
+          echo "|------|------|" >> "$GITHUB_STEP_SUMMARY"
+          echo "| 上游版本 | ${{ needs.check_versions.outputs.stable_version }} |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Docker tag | ${{ needs.check_versions.outputs.stable_docker_tag }} |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| 架构 | amd64, arm64, 386, arm/v7, arm/v6 |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| GHCR | \`${{ env.GHCR_IMAGE }}:${{ needs.check_versions.outputs.stable_docker_tag }}\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Docker Hub | \`${{ env.DOCKERHUB_IMAGE }}:${{ needs.check_versions.outputs.stable_docker_tag }}\` |" >> "$GITHUB_STEP_SUMMARY"
 
   # ==================== 构建测试版 ====================
   build_testing:
     name: 构建测试版镜像
     runs-on: ubuntu-latest
     needs: check_versions
-    if: needs.check_versions.outputs.testing_need_build == 'true'
+    if: >-
+      needs.check_versions.outputs.testing_need_build == 'true' &&
+      (github.event_name != 'workflow_dispatch' || github.event.inputs.branch == 'both' || github.event.inputs.branch == 'testing')
     steps:
       - name: 克隆上游代码
         run: |
-          echo "📥 克隆 ${{ env.UPSTREAM_TESTING_BRANCH }} 分支..."
+          echo "克隆 ${{ env.UPSTREAM_TESTING_BRANCH }} 分支..."
           git clone --depth 1 --branch ${{ env.UPSTREAM_TESTING_BRANCH }} \
-            ${{ env.UPSTREAM_REPO }} .
-          echo "✅ 代码克隆完成"
-          
+            ${{ env.UPSTREAM_REPO }} src
+          echo "代码克隆完成"
+
       - name: Setup Docker Buildx
         uses: docker/setup-buildx-action@v3
-        
+
       - name: Setup QEMU
         uses: docker/setup-qemu-action@v3
-        
+
       - name: Login to GHCR
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: ${{ github.repository_owner }}
           password: ${{ secrets.GITHUB_TOKEN }}
-          
+
       - name: Login to Docker Hub
         uses: docker/login-action@v3
         with:
           username: cary17
           password: ${{ secrets.DOCKERHUB_TOKEN }}
-          
+
       - name: 构建并推送测试版多架构镜像
         run: |
           VERSION="${{ needs.check_versions.outputs.testing_version }}"
-          echo "🔧 开始构建测试版多架构镜像..."
-          echo "   版本: ${VERSION}"
+          DOCKER_TAG="${{ needs.check_versions.outputs.testing_docker_tag }}"
+          echo "开始构建测试版多架构镜像..."
+          echo "   上游版本: ${VERSION}"
+          echo "   Docker tag: ${DOCKER_TAG}"
           echo "   架构: linux/amd64, linux/arm64, linux/386, linux/arm/v7, linux/arm/v6"
-          
-          # 测试版：只推送版本标签，不推送 latest
+
           docker buildx build \
             --platform linux/amd64,linux/arm64,linux/386,linux/arm/v7,linux/arm/v6 \
-            -t "${{ env.GHCR_IMAGE }}:${VERSION}" \
-            -t "${{ env.DOCKERHUB_IMAGE }}:${VERSION}" \
+            -t "${{ env.GHCR_IMAGE }}:${DOCKER_TAG}" \
+            -t "${{ env.DOCKERHUB_IMAGE }}:${DOCKER_TAG}" \
             --push \
-            -f Dockerfile .
-          
-          echo "✅ 测试版镜像推送完成"
-          echo "   ${{ env.GHCR_IMAGE }}:${VERSION}"
-          echo "   ${{ env.DOCKERHUB_IMAGE }}:${VERSION}"
+            -f src/Dockerfile src
+
+          echo "测试版镜像推送完成"
+          echo "   ${{ env.GHCR_IMAGE }}:${DOCKER_TAG}"
+          echo "   ${{ env.DOCKERHUB_IMAGE }}:${DOCKER_TAG}"
 
       - name: Checkout Current Repo
         uses: actions/checkout@v4
         with:
+          path: repo
           token: ${{ secrets.GITHUB_TOKEN }}
           fetch-depth: 0
 
       - name: 更新测试版版本记录
+        working-directory: repo
         run: |
           mkdir -p .github/version
-
-          echo "${{ needs.check_versions.outputs.testing_version }}" \
-            > .github/version/testing.txt
+          echo "${{ needs.check_versions.outputs.testing_version }}" > .github/version/testing.txt
 
           git config user.name "github-actions[bot]"
-          git config user.email \
-            "41898282+github-actions[bot]@users.noreply.github.com"
-
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add .github/version/testing.txt
 
           if git diff --cached --quiet; then
             echo "No changes"
           else
-            git commit -m \
-              "chore: update testing version [skip ci]"
-            git pull --rebase origin "${GITHUB_REF_NAME}"
-            git push
+            git commit -m "chore: update testing version [skip ci]"
+            for attempt in 1 2 3; do
+              git pull --rebase origin "${GITHUB_REF_NAME}"
+              if git push; then
+                exit 0
+              fi
+              echo "Push failed, retrying (${attempt}/3)..."
+              sleep 5
+            done
+            exit 1
           fi
-          
+
+      - name: 检查测试版版本记录
+        working-directory: repo
+        run: |
+          EXPECTED="${{ needs.check_versions.outputs.testing_version }}"
+          FILE=".github/version/testing.txt"
+
+          if [[ ! -f "$FILE" ]]; then
+            echo "版本记录文件不存在: $FILE"
+            exit 1
+          fi
+
+          ACTUAL=$(cat "$FILE")
+          if [[ "$ACTUAL" != "$EXPECTED" ]]; then
+            echo "版本记录不正确"
+            echo "期望: $EXPECTED"
+            echo "实际: $ACTUAL"
+            exit 1
+          fi
+
+          git fetch origin "${GITHUB_REF_NAME}:refs/remotes/origin/${GITHUB_REF_NAME}"
+          REMOTE=$(git show "origin/${GITHUB_REF_NAME}:${FILE}" 2>/dev/null || true)
+          if [[ "$REMOTE" != "$EXPECTED" ]]; then
+            echo "远端版本记录不正确"
+            echo "期望: $EXPECTED"
+            echo "远端: $REMOTE"
+            exit 1
+          fi
+
+          echo "测试版版本记录校验通过: $EXPECTED"
+
       - name: 构建摘要
         run: |
-          echo "## 🎉 测试版构建完成" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "| 项目 | 信息 |" >> $GITHUB_STEP_SUMMARY
-          echo "|------|------|" >> $GITHUB_STEP_SUMMARY
-          echo "| 版本 | ${{ needs.check_versions.outputs.testing_version }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| 架构 | amd64, arm64, 386, arm/v7, arm/v6 |" >> $GITHUB_STEP_SUMMARY
-          echo "| GHCR | \`${{ env.GHCR_IMAGE }}:${{ needs.check_versions.outputs.testing_version }}\` |" >> $GITHUB_STEP_SUMMARY
-          echo "| Docker Hub | \`${{ env.DOCKERHUB_IMAGE }}:${{ needs.check_versions.outputs.testing_version }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "## 测试版构建完成" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "| 项目 | 信息 |" >> "$GITHUB_STEP_SUMMARY"
+          echo "|------|------|" >> "$GITHUB_STEP_SUMMARY"
+          echo "| 上游版本 | ${{ needs.check_versions.outputs.testing_version }} |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Docker tag | ${{ needs.check_versions.outputs.testing_docker_tag }} |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| 架构 | amd64, arm64, 386, arm/v7, arm/v6 |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| GHCR | \`${{ env.GHCR_IMAGE }}:${{ needs.check_versions.outputs.testing_docker_tag }}\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Docker Hub | \`${{ env.DOCKERHUB_IMAGE }}:${{ needs.check_versions.outputs.testing_docker_tag }}\` |" >> "$GITHUB_STEP_SUMMARY"
+
+
