@@ -2,8 +2,8 @@ name: Build reF1nd Sing-Box Docker Images
 
 on:
   schedule:
-    # Every 8 hours.
-    - cron: "0 */8 * * *"
+    # Every 1 hours.
+    - cron: "0 */1 * * *"
   workflow_dispatch:
     inputs:
       force_build:
