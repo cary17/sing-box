@@ -2,21 +2,20 @@
 
 自动构建 [reF1nd/sing-box](https://github.com/reF1nd/sing-box) 项目的 Docker 镜像。
 
-
-
 ### GitHub Container Registry
 ```bash
-ghcr.io/cary17/sing-box:latest      # 稳定版最新
-ghcr.io/cary17/sing-box:v1.13.13     # 稳定版特定版本
+ghcr.io/cary17/sing-box:latest           # 稳定版最新
+ghcr.io/cary17/sing-box:stable           # 稳定版最新
+ghcr.io/cary17/sing-box:testing          # 测试版最新
+ghcr.io/cary17/sing-box:v1.13.13         # 稳定版特定版本
 ghcr.io/cary17/sing-box:v1.14.0-alpha.28 # 测试版特定版本
 ```
 
-
-
-
 ### Docker Hub
 ```bash
-cary17/sing-box:latest
-cary17/sing-box:v1.13.13
-cary17/sing-box:v1.14.0-alpha.28
+cary17/sing-box:latest                  # 稳定版最新
+cary17/sing-box:stable                  # 稳定版最新
+cary17/sing-box:testing                 # 测试版最新
+cary17/sing-box:v1.13.13                # 稳定版特定版本
+cary17/sing-box:v1.14.0-alpha.28        # 测试版特定版本
 ```
