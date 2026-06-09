@@ -179,11 +179,11 @@ jobs:
             ${{ env.UPSTREAM_REPO }} src
           echo "代码克隆完成"
 
-      - name: Setup Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
       - name: Setup QEMU
         uses: docker/setup-qemu-action@v3
+
+      - name: Setup Docker Buildx
+        uses: docker/setup-buildx-action@v3
 
       - name: Login to GHCR
         uses: docker/login-action@v3
@@ -199,28 +199,21 @@ jobs:
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
       - name: 构建并推送稳定版多架构镜像
-        run: |
-          VERSION="${{ needs.check_versions.outputs.stable_version }}"
-          DOCKER_TAG="${{ needs.check_versions.outputs.stable_docker_tag }}"
-          echo "开始构建稳定版多架构镜像..."
-          echo "   上游版本: ${VERSION}"
-          echo "   Docker tag: ${DOCKER_TAG}"
-          echo "   架构: linux/amd64, linux/arm64, linux/386, linux/arm/v7, linux/arm/v6"
-
-          docker buildx build \
-            --platform linux/amd64,linux/arm64,linux/386,linux/arm/v7,linux/arm/v6 \
-            -t "${{ env.GHCR_IMAGE }}:${DOCKER_TAG}" \
-            -t "${{ env.GHCR_IMAGE }}:latest" \
-            -t "${{ env.DOCKERHUB_IMAGE }}:${DOCKER_TAG}" \
-            -t "${{ env.DOCKERHUB_IMAGE }}:latest" \
-            --push \
-            -f src/Dockerfile src
-
-          echo "稳定版镜像推送完成"
-          echo "   ${{ env.GHCR_IMAGE }}:${DOCKER_TAG}"
-          echo "   ${{ env.GHCR_IMAGE }}:latest"
-          echo "   ${{ env.DOCKERHUB_IMAGE }}:${DOCKER_TAG}"
-          echo "   ${{ env.DOCKERHUB_IMAGE }}:latest"
+        uses: docker/build-push-action@v6
+        with:
+          context: src
+          file: src/Dockerfile
+          platforms: linux/amd64,linux/arm64,linux/386,linux/arm/v7,linux/arm/v6
+          push: true
+          cache-from: type=gha,scope=stable
+          cache-to: type=gha,mode=max,scope=stable
+          tags: |
+            ${{ env.GHCR_IMAGE }}:${{ needs.check_versions.outputs.stable_docker_tag }}
+            ${{ env.GHCR_IMAGE }}:latest
+            ${{ env.GHCR_IMAGE }}:stable
+            ${{ env.DOCKERHUB_IMAGE }}:${{ needs.check_versions.outputs.stable_docker_tag }}
+            ${{ env.DOCKERHUB_IMAGE }}:latest
+            ${{ env.DOCKERHUB_IMAGE }}:stable
 
       - name: Checkout Current Repo
         uses: actions/checkout@v4
@@ -273,7 +266,7 @@ jobs:
             exit 1
           fi
 
-          git fetch origin "${GITHUB_REF_NAME}:refs/remotes/origin/${GITHUB_REF_NAME}"
+          git fetch origin "${GITHUB_REF_NAME}"
           REMOTE=$(git show "origin/${GITHUB_REF_NAME}:${FILE}" 2>/dev/null || true)
           if [[ "$REMOTE" != "$EXPECTED" ]]; then
             echo "远端版本记录不正确"
@@ -294,7 +287,9 @@ jobs:
           echo "| Docker tag | ${{ needs.check_versions.outputs.stable_docker_tag }} |" >> "$GITHUB_STEP_SUMMARY"
           echo "| 架构 | amd64, arm64, 386, arm/v7, arm/v6 |" >> "$GITHUB_STEP_SUMMARY"
           echo "| GHCR | \`${{ env.GHCR_IMAGE }}:${{ needs.check_versions.outputs.stable_docker_tag }}\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| GHCR stable | \`${{ env.GHCR_IMAGE }}:stable\` |" >> "$GITHUB_STEP_SUMMARY"
           echo "| Docker Hub | \`${{ env.DOCKERHUB_IMAGE }}:${{ needs.check_versions.outputs.stable_docker_tag }}\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Docker Hub stable | \`${{ env.DOCKERHUB_IMAGE }}:stable\` |" >> "$GITHUB_STEP_SUMMARY"
 
   # ==================== 构建测试版 ====================
   build_testing:
@@ -312,11 +307,11 @@ jobs:
             ${{ env.UPSTREAM_REPO }} src
           echo "代码克隆完成"
 
-      - name: Setup Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
       - name: Setup QEMU
         uses: docker/setup-qemu-action@v3
+
+      - name: Setup Docker Buildx
+        uses: docker/setup-buildx-action@v3
 
       - name: Login to GHCR
         uses: docker/login-action@v3
@@ -332,24 +327,19 @@ jobs:
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
       - name: 构建并推送测试版多架构镜像
-        run: |
-          VERSION="${{ needs.check_versions.outputs.testing_version }}"
-          DOCKER_TAG="${{ needs.check_versions.outputs.testing_docker_tag }}"
-          echo "开始构建测试版多架构镜像..."
-          echo "   上游版本: ${VERSION}"
-          echo "   Docker tag: ${DOCKER_TAG}"
-          echo "   架构: linux/amd64, linux/arm64, linux/386, linux/arm/v7, linux/arm/v6"
-
-          docker buildx build \
-            --platform linux/amd64,linux/arm64,linux/386,linux/arm/v7,linux/arm/v6 \
-            -t "${{ env.GHCR_IMAGE }}:${DOCKER_TAG}" \
-            -t "${{ env.DOCKERHUB_IMAGE }}:${DOCKER_TAG}" \
-            --push \
-            -f src/Dockerfile src
-
-          echo "测试版镜像推送完成"
-          echo "   ${{ env.GHCR_IMAGE }}:${DOCKER_TAG}"
-          echo "   ${{ env.DOCKERHUB_IMAGE }}:${DOCKER_TAG}"
+        uses: docker/build-push-action@v6
+        with:
+          context: src
+          file: src/Dockerfile
+          platforms: linux/amd64,linux/arm64,linux/386,linux/arm/v7,linux/arm/v6
+          push: true
+          cache-from: type=gha,scope=testing
+          cache-to: type=gha,mode=max,scope=testing
+          tags: |
+            ${{ env.GHCR_IMAGE }}:${{ needs.check_versions.outputs.testing_docker_tag }}
+            ${{ env.GHCR_IMAGE }}:testing
+            ${{ env.DOCKERHUB_IMAGE }}:${{ needs.check_versions.outputs.testing_docker_tag }}
+            ${{ env.DOCKERHUB_IMAGE }}:testing
 
       - name: Checkout Current Repo
         uses: actions/checkout@v4
@@ -402,7 +392,7 @@ jobs:
             exit 1
           fi
 
-          git fetch origin "${GITHUB_REF_NAME}:refs/remotes/origin/${GITHUB_REF_NAME}"
+          git fetch origin "${GITHUB_REF_NAME}"
           REMOTE=$(git show "origin/${GITHUB_REF_NAME}:${FILE}" 2>/dev/null || true)
           if [[ "$REMOTE" != "$EXPECTED" ]]; then
             echo "远端版本记录不正确"
@@ -423,6 +413,6 @@ jobs:
           echo "| Docker tag | ${{ needs.check_versions.outputs.testing_docker_tag }} |" >> "$GITHUB_STEP_SUMMARY"
           echo "| 架构 | amd64, arm64, 386, arm/v7, arm/v6 |" >> "$GITHUB_STEP_SUMMARY"
           echo "| GHCR | \`${{ env.GHCR_IMAGE }}:${{ needs.check_versions.outputs.testing_docker_tag }}\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| GHCR testing | \`${{ env.GHCR_IMAGE }}:testing\` |" >> "$GITHUB_STEP_SUMMARY"
           echo "| Docker Hub | \`${{ env.DOCKERHUB_IMAGE }}:${{ needs.check_versions.outputs.testing_docker_tag }}\` |" >> "$GITHUB_STEP_SUMMARY"
-
-
+          echo "| Docker Hub testing | \`${{ env.DOCKERHUB_IMAGE }}:testing\` |" >> "$GITHUB_STEP_SUMMARY"
