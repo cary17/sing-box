@@ -20,6 +20,28 @@
         }
       ],
       "version": 5
+    },
+    {
+      "type": "shadowsocks",
+      "tag": "ss-in",
+      "listen": "::",
+      "listen_port": 2000,
+      "method": "2022-blake3-aes-128-gcm",
+      "password": "8JCsPssfgS8tiRwiMlhARg==",
+      "users": [
+        {
+          "name": "Surge",
+          "password": "PCD2Z4o12bKUoFa3cC97Hw=="
+        },
+        {
+          "name": "sing-box",
+          "password": "z+KVg1sIYh7AhM7r+u3Qog=="
+        }
+      ],
+      "multiplex": {
+        "enabled": true,
+        "padding": true
+      }
     }
   ],
     "route": {

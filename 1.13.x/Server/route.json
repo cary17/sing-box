@@ -17,6 +17,10 @@
       {
         "rule_set": "openai",
         "outbound": "wireguard"
+      },
+      {
+        "auth_user": "WireGuard",
+        "outbound": "wireguard"
       }
     ],
     "final": "direct",
