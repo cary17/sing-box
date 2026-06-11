@@ -3,19 +3,19 @@
     {
       "type": "selector",
       "tag": "Proxy",
-      "outbounds": ["DMIT-HKG", "MISAKA-HKG", "MISAKA-TYO", "MISAKA-Seattle"],
+      "outbounds":["MISAKA-HKG", "MISAKA-TYO", "MISAKA-Seattle"],
       "interrupt_exist_connections": true
     },
     {
       "type": "selector",
       "tag": "Streaming Media",
-      "outbounds": ["DMIT-HKG", "MISAKA-HKG", "MISAKA-TYO", "MISAKA-Seattle"],
+      "outbounds": ["MISAKA-HKG", "MISAKA-TYO", "MISAKA-Seattle"],
       "interrupt_exist_connections": true
     },
     {
       "type": "selector",
       "tag": "Paypal",
-      "outbounds": ["DMIT-HKG", "MISAKA-HKG", "MISAKA-Seattle"],
+      "outbounds": ["MISAKA-HKG", "MISAKA-TYO", "MISAKA-Seattle"],
       "interrupt_exist_connections": true
     },
     {
@@ -32,11 +32,9 @@
       "type": "loadbalance",
       "tag": "HK",
       "outbounds": [
-        "MISAKA-HKG",
-        "DMIT-HKG"
+        "MISAKA-HKG"
       ],
       "strategy": "consistent-hashing",
-      "include": "HK|HKG",
       "url": "http://1.1.1.1/generate_204",
       "interval": "3m",
       "idle_timeout": "30m",
@@ -51,7 +49,6 @@
         "MISAKA-TYO"
       ],
       "strategy": "consistent-hashing",
-      "include": "TYO|JP",
       "url": "http://1.1.1.1/generate_204",
       "interval": "3m",
       "idle_timeout": "30m",
@@ -66,7 +63,6 @@
         "MISAKA-Seattle"
       ],
       "strategy": "consistent-hashing",
-      "include": "Seattle|US|LAX|LA",
       "url": "http://1.1.1.1/generate_204",
       "interval": "3m",
       "idle_timeout": "30m",
@@ -79,12 +75,10 @@
       "tag": "GLOBAL",
       "outbounds": [
         "MISAKA-HKG",
-        "DMIT-HKG",
-        "MISAKA-TYO",
+         "MISAKA-TYO",
         "MISAKA-Seattle"
       ],
       "strategy": "consistent-hashing",
-      "include": "HKG|TYO|Seattle|US|LAX|LA",
       "url": "http://1.1.1.1/generate_204",
       "interval": "3m",
       "idle_timeout": "30m",
@@ -100,16 +94,7 @@
       "type": "snell",
       "tag": "MISAKA-HKG",
       "server": "111.111.111.111",
-      "server_port": 12195,
-      "psk": "/l5N99qmWLDDkHf8QPWw+w==",
-      "version": 5,
-      "reuse": true
-    },
-    {
-      "type": "snell",
-      "tag": "DMIT-HKG",
-      "server": "111.111.111.111",
-      "server_port": 11948,
+      "server_port": 1000,
       "psk": "/l5N99qmWLDDkHf8QPWw+w==",
       "version": 5,
       "reuse": true
@@ -117,20 +102,23 @@
     {
       "type": "snell",
       "tag": "MISAKA-TYO",
-      "server": "111.111.111.111",
-      "server_port": 46210,
-      "psk": "/l5N99qmWLDDkHf8QPWw+w==",
+      "server": "2.2.2.2",
+      "server_port": 1000,
+      "psk": "TVdxveegWxUNTtpKhj6LBQ==",
       "version": 5,
       "reuse": true
     },
     {
-      "type": "snell",
+      "type": "shadowsocks",
       "tag": "MISAKA-Seattle",
-      "server": "111.111.111.111",
-      "server_port": 54210,
-      "psk": "/l5N99qmWLDDkHf8QPWw+w==",
-      "version": 5,
-      "reuse": true
+      "server": "3.3.3.3",
+      "server_port": 2000,
+      "method": "2022-blake3-aes-128-gcm",
+      "password": "z+KVg1sIYh7AhM7r+u3Qog==",
+      "multiplex": {
+        "enabled": true,
+        "padding": true
+      }
     }
   ]
 }

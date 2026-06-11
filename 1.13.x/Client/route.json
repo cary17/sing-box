@@ -23,7 +23,7 @@
           "Meta",
           "X"
         ],
-        "outbound": "JP"
+        "outbound": "GLOBAL"
       },
       {
         "rule_set": [
