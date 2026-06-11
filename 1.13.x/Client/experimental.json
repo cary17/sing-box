@@ -1,0 +1,18 @@
+{
+  "experimental": {
+    "clash_api": {
+      "external_controller": "0.0.0.0:12345",
+      "external_ui": "ui",
+      "external_ui_download_url": "https://github.com/MetaCubeX/metacubexd/archive/refs/heads/gh-pages.zip",
+      "external_ui_download_detour": "GLOBAL",
+      "secret": "QOOWOM8VxFbP2anqQdo6Vg==",
+      "default_mode": "rule"
+    },
+    "cache_file": {
+      "enabled": true,
+      "path": "/var/lib/sing-box/cache.db",
+      "store_fakeip": true,
+      "store_rdrc": true
+    }
+  }
+}

@@ -1,0 +1,206 @@
+{
+  "route": {
+    "rules": [
+      {
+        "action": "sniff"
+      },
+      {
+        "protocol": "dns",
+        "action": "hijack-dns"
+      },
+      {
+        "rule_set": [
+          "Claude",
+          "JetBrains",
+          "Gemini",
+          "OpenAI"
+        ],
+        "outbound": "AI"
+      },
+      {
+        "rule_set": [
+          "Google",
+          "Meta",
+          "X"
+        ],
+        "outbound": "JP"
+      },
+      {
+        "rule_set": [
+          "Spotify"
+        ],
+        "outbound": "HK"
+      },
+      {
+        "domain_suffix": [
+          "okemby.org",
+          "emby.my",
+          "nebula-media.org",
+          "shrekmedia.org",
+          "191920.xyz",
+          "cn2gias.uk",
+          "ciallo.party",
+          "28.al",
+          "zn.al",
+          "mobaiemby.site"
+        ],
+        "rule_set": [
+          "Twitch",
+          "Bahamut"
+        ],
+        "outbound": "Streaming Media"
+      },
+      {
+        "rule_set": "PayPal",
+        "outbound": "PayPal"
+      },
+      {
+        "rule_set": [
+          "Microsoft",
+          "Apple"
+        ],
+        "outbound": "GLOBAL"
+      },
+            {
+        "network": "icmp",
+        "outbound": "direct"
+      },
+      {
+        "ip_is_private": true,
+        "outbound": "direct"
+      },
+      {
+        "rule_set": [
+          "Geosite-CN",
+          "Geoip-CN"
+        ],
+        "outbound": "Direct"
+      }
+    ],
+    "rule_set": [
+      {
+        "tag": "Geoip-CN",
+        "type": "remote",
+        "format": "binary",
+        "url": "https://raw.githubusercontent.com/Loyalsoldier/geoip/release/srs/cn.srs",
+        "update_interval": "12h",
+        "download_detour": "HK"
+      },
+      {
+        "tag": "Geosite-CN",
+        "type": "remote",
+        "format": "binary",
+        "url": "https://raw.githubusercontent.com/lyc8503/sing-box-rules/rule-set-geosite/geosite-cn.srs",
+        "update_interval": "12h",
+        "download_detour": "HK"
+      },
+      {
+        "tag": "PayPal",
+        "type": "remote",
+        "format": "binary",
+        "url": "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-paypal.srs",
+        "update_interval": "12h",
+        "download_detour": "HK"
+      },
+      {
+        "tag": "Bahamut",
+        "type": "remote",
+        "format": "binary",
+        "url": "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-bahamut.srs",
+        "update_interval": "12h",
+        "download_detour": "HK"
+      },
+      {
+        "tag": "Twitch",
+        "type": "remote",
+        "format": "binary",
+        "url": "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-twitch.srs",
+        "update_interval": "12h",
+        "download_detour": "HK"
+      },
+      {
+        "tag": "Apple",
+        "type": "remote",
+        "format": "binary",
+        "url": "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-apple.srs",
+        "update_interval": "12h",
+        "download_detour": "HK"
+      },
+      {
+        "tag": "Google",
+        "type": "remote",
+        "format": "binary",
+        "url": "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-google.srs",
+        "update_interval": "12h",
+        "download_detour": "HK"
+      },
+      {
+        "tag": "Claude",
+        "type": "remote",
+        "format": "binary",
+        "url": "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-anthropic.srs",
+        "update_interval": "12h",
+        "download_detour": "HK"
+      },
+      {
+        "tag": "Gemini",
+        "type": "remote",
+        "format": "binary",
+        "url": "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-google-gemini.srs",
+        "update_interval": "12h",
+        "download_detour": "HK"
+      },
+      {
+        "tag": "Microsoft",
+        "type": "remote",
+        "format": "binary",
+        "url": "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-microsoft.srs",
+        "update_interval": "12h",
+        "download_detour": "HK"
+      },
+      {
+        "tag": "OpenAI",
+        "type": "remote",
+        "format": "binary",
+        "url": "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-openai.srs",
+        "update_interval": "12h",
+        "download_detour": "HK"
+      },
+      {
+        "tag": "JetBrains",
+        "type": "remote",
+        "format": "binary",
+        "url": "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-jetbrains-ai.srs",
+        "update_interval": "12h",
+        "download_detour": "HK"
+      },
+      {
+        "tag": "Meta",
+        "type": "remote",
+        "format": "binary",
+        "url": "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-meta.srs",
+        "update_interval": "12h",
+        "download_detour": "HK"
+      },
+      {
+        "tag": "X",
+        "type": "remote",
+        "format": "binary",
+        "url": "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-x.srs",
+        "update_interval": "12h",
+        "download_detour": "HK"
+      },
+      {
+        "tag": "Spotify",
+        "type": "remote",
+        "format": "binary",
+        "url": "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-spotify.srs",
+        "update_interval": "12h",
+        "download_detour": "HK"
+      }
+    ],
+    "final": "GLOBAL",
+    "default_domain_resolver": "10",
+    "auto_detect_interface": true
+  }
+}

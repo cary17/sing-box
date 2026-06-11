@@ -1,1 +1,55 @@
-
+{
+  "dns": {
+    "servers": [
+      {
+        "type": "udp",
+        "tag": "10",
+        "server": "10.10.10.10"
+      },
+      {
+        "type": "https",
+        "tag": "Google-DNS",
+        "server": "dns.google",
+        "path": "/dns-query",
+        "domain_resolver": "10",
+        "server_port": 443,
+        "detour": "HK"
+      },
+      {
+        "type": "resolved",
+        "tag": "resolved-in",
+        "service": "resolved",
+        "accept_default_resolvers": true
+      },
+      {
+        "type": "fakeip",
+        "tag": "fakeip",
+        "inet4_range": "198.18.0.0/15"
+      }
+    ],
+    "rules": [
+      {
+        "inbound": "tun-in",
+        "server": "resolved-in"
+      },
+      {
+        "domain_suffix": [
+          "msftncsi.com",
+          "msftconnecttest.com"
+        ],
+        "server": "Google-DNS"
+      },
+      {
+        "query_type": [
+          "A",
+          "AAAA"
+        ],
+        "server": "fakeip"
+      }
+    ],
+    "reverse_mapping": false,
+    "disable_cache": false,
+    "disable_expire": false,
+    "cache_capacity": 51200
+  }
+}

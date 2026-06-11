@@ -1,0 +1,136 @@
+{
+  "outbounds": [
+    {
+      "type": "selector",
+      "tag": "Proxy",
+      "outbounds": ["DMIT-HKG", "MISAKA-HKG", "MISAKA-TYO", "MISAKA-Seattle"],
+      "interrupt_exist_connections": true
+    },
+    {
+      "type": "selector",
+      "tag": "Streaming Media",
+      "outbounds": ["DMIT-HKG", "MISAKA-HKG", "MISAKA-TYO", "MISAKA-Seattle"],
+      "interrupt_exist_connections": true
+    },
+    {
+      "type": "selector",
+      "tag": "Paypal",
+      "outbounds": ["DMIT-HKG", "MISAKA-HKG", "MISAKA-Seattle"],
+      "interrupt_exist_connections": true
+    },
+    {
+      "type": "urltest",
+      "tag": "AI",
+      "outbounds": ["US", "JP"],
+      "url": "http://1.0.0.1/generate_204",
+      "interval": "1m",
+      "tolerance": 10,
+      "idle_timeout": "30m",
+      "interrupt_exist_connections": true
+    },
+    {
+      "type": "loadbalance",
+      "tag": "HK",
+      "outbounds": [
+        "MISAKA-HKG",
+        "DMIT-HKG"
+      ],
+      "strategy": "consistent-hashing",
+      "include": "HK|HKG",
+      "url": "http://1.1.1.1/generate_204",
+      "interval": "3m",
+      "idle_timeout": "30m",
+      "ttl": "10m",
+      "use_all_providers": false,
+      "interrupt_exist_connections": true
+    },
+    {
+      "type": "loadbalance",
+      "tag": "JP",
+      "outbounds": [
+        "MISAKA-TYO"
+      ],
+      "strategy": "consistent-hashing",
+      "include": "TYO|JP",
+      "url": "http://1.1.1.1/generate_204",
+      "interval": "3m",
+      "idle_timeout": "30m",
+      "ttl": "10m",
+      "use_all_providers": false,
+      "interrupt_exist_connections": true
+    },
+    {
+      "type": "loadbalance",
+      "tag": "US",
+      "outbounds": [
+        "MISAKA-Seattle"
+      ],
+      "strategy": "consistent-hashing",
+      "include": "Seattle|US|LAX|LA",
+      "url": "http://1.1.1.1/generate_204",
+      "interval": "3m",
+      "idle_timeout": "30m",
+      "ttl": "10m",
+      "use_all_providers": false,
+      "interrupt_exist_connections": true
+    },
+    {
+      "type": "loadbalance",
+      "tag": "GLOBAL",
+      "outbounds": [
+        "MISAKA-HKG",
+        "DMIT-HKG",
+        "MISAKA-TYO",
+        "MISAKA-Seattle"
+      ],
+      "strategy": "consistent-hashing",
+      "include": "HKG|TYO|Seattle|US|LAX|LA",
+      "url": "http://1.1.1.1/generate_204",
+      "interval": "3m",
+      "idle_timeout": "30m",
+      "ttl": "10m",
+      "use_all_providers": false,
+      "interrupt_exist_connections": true
+    },
+    {
+      "type": "direct",
+      "tag": "Direct"
+    },
+    {
+      "type": "snell",
+      "tag": "MISAKA-HKG",
+      "server": "111.111.111.111",
+      "server_port": 12195,
+      "psk": "/l5N99qmWLDDkHf8QPWw+w==",
+      "version": 5,
+      "reuse": true
+    },
+    {
+      "type": "snell",
+      "tag": "DMIT-HKG",
+      "server": "111.111.111.111",
+      "server_port": 11948,
+      "psk": "/l5N99qmWLDDkHf8QPWw+w==",
+      "version": 5,
+      "reuse": true
+    },
+    {
+      "type": "snell",
+      "tag": "MISAKA-TYO",
+      "server": "111.111.111.111",
+      "server_port": 46210,
+      "psk": "/l5N99qmWLDDkHf8QPWw+w==",
+      "version": 5,
+      "reuse": true
+    },
+    {
+      "type": "snell",
+      "tag": "MISAKA-Seattle",
+      "server": "111.111.111.111",
+      "server_port": 54210,
+      "psk": "/l5N99qmWLDDkHf8QPWw+w==",
+      "version": 5,
+      "reuse": true
+    }
+  ]
+}
