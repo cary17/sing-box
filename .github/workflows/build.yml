@@ -34,6 +34,7 @@ env:
   UPSTREAM_REPO: "https://github.com/reF1nd/sing-box.git"
   UPSTREAM_STABLE_BRANCH: "reF1nd-stable"
   UPSTREAM_TESTING_BRANCH: "reF1nd-testing"
+  UPSTREAM_RELEASES_REPO: "reF1nd/sing-box-releases"
 
   # 镜像仓库配置
   GHCR_IMAGE: "ghcr.io/${{ github.repository_owner }}/sing-box"
@@ -60,16 +61,19 @@ jobs:
       - name: 获取稳定版版本号
         id: stable_version
         run: |
-          git clone --depth 1 --branch ${{ env.UPSTREAM_STABLE_BRANCH }} \
-            ${{ env.UPSTREAM_REPO }} /tmp/stable
-          cd /tmp/stable
+          API_URL="https://api.github.com/repos/${{ env.UPSTREAM_RELEASES_REPO }}/releases/latest"
+          RELEASE_JSON=$(curl -fsSL \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer ${{ github.token }}" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "$API_URL")
 
-          TAG=$(git describe --tags --abbrev=0 2>/dev/null || true)
-          if [[ -n "$TAG" ]]; then
-            VERSION="$TAG"
-          else
-            VERSION="stable-$(git rev-parse --short HEAD)"
+          VERSION=$(jq -r '.tag_name // empty' <<< "$RELEASE_JSON")
+          if [[ -z "$VERSION" ]]; then
+            echo "Failed to read stable release tag from $API_URL"
+            exit 1
           fi
+
           DOCKER_TAG="${VERSION%-reF1nd}"
 
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
@@ -113,16 +117,19 @@ jobs:
       - name: 获取测试版版本号
         id: testing_version
         run: |
-          git clone --depth 1 --branch ${{ env.UPSTREAM_TESTING_BRANCH }} \
-            ${{ env.UPSTREAM_REPO }} /tmp/testing
-          cd /tmp/testing
+          API_URL="https://api.github.com/repos/${{ env.UPSTREAM_RELEASES_REPO }}/releases?per_page=100"
+          RELEASES_JSON=$(curl -fsSL \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer ${{ github.token }}" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "$API_URL")
 
-          TAG=$(git describe --tags --abbrev=0 2>/dev/null || true)
-          if [[ -n "$TAG" ]]; then
-            VERSION="$TAG"
-          else
-            VERSION="$(git rev-parse --short HEAD)"
+          VERSION=$(jq -r '[.[] | select(.prerelease == true)][0].tag_name // empty' <<< "$RELEASES_JSON")
+          if [[ -z "$VERSION" ]]; then
+            echo "Failed to read testing pre-release tag from $API_URL"
+            exit 1
           fi
+
           DOCKER_TAG="${VERSION%-reF1nd}"
 
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
