@@ -47,8 +47,10 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       stable_version: ${{ steps.stable_version.outputs.version }}
+      stable_published_at: ${{ steps.stable_version.outputs.published_at }}
       stable_docker_tag: ${{ steps.stable_version.outputs.docker_tag }}
       testing_version: ${{ steps.testing_version.outputs.version }}
+      testing_published_at: ${{ steps.testing_version.outputs.published_at }}
       testing_docker_tag: ${{ steps.testing_version.outputs.docker_tag }}
       stable_need_build: ${{ steps.stable_check.outputs.need_build }}
       testing_need_build: ${{ steps.testing_check.outputs.need_build }}
@@ -61,36 +63,74 @@ jobs:
       - name: 获取稳定版版本号
         id: stable_version
         run: |
-          API_URL="https://api.github.com/repos/${{ env.UPSTREAM_RELEASES_REPO }}/releases/latest"
-          RELEASE_JSON=$(curl -fsSL \
+          version_key() {
+            local tag="${1#v}"
+            local base="${tag%%-reF1nd*}"
+            local suffix="${tag#*-reF1nd}"
+            local major minor patch revision
+
+            IFS=. read -r major minor patch _ <<< "$base"
+            if [[ "$suffix" == "$tag" || -z "$suffix" ]]; then
+              revision=0
+            else
+              revision="${suffix#.}"
+              [[ "$revision" =~ ^[0-9]+$ ]] || revision=0
+            fi
+
+            printf '%08d.%08d.%08d.%08d' "${major:-0}" "${minor:-0}" "${patch:-0}" "${revision:-0}"
+          }
+
+          beijing_time() {
+            TZ=Asia/Shanghai date -d "$1" +'%Y-%m-%dT%H:%M:%S+08:00'
+          }
+
+          API_URL="https://api.github.com/repos/${{ env.UPSTREAM_RELEASES_REPO }}/releases?per_page=100"
+          RELEASE=$(curl -fsSL \
             -H "Accept: application/vnd.github+json" \
             -H "Authorization: Bearer ${{ github.token }}" \
             -H "X-GitHub-Api-Version: 2022-11-28" \
-            "$API_URL")
+            "$API_URL" |
+            jq -r '.[] | select(.draft == false and .prerelease == false) | [.tag_name, (.published_at // .created_at)] | @tsv' |
+            while IFS=$'\t' read -r tag published_at; do
+              printf '%s\t%s\t%s\n' "$(version_key "$tag")" "$published_at" "$tag"
+            done |
+            sort -t $'\t' -k1,1 -k2,2 |
+            tail -n 1)
 
-          VERSION=$(jq -r '.tag_name // empty' <<< "$RELEASE_JSON")
-          if [[ -z "$VERSION" ]]; then
-            echo "Failed to read stable release tag from $API_URL"
+          if [[ -z "$RELEASE" ]]; then
+            echo "未找到稳定版 release"
             exit 1
           fi
 
+          VERSION=$(cut -f3 <<< "$RELEASE")
+          PUBLISHED_AT=$(beijing_time "$(cut -f2 <<< "$RELEASE")")
           DOCKER_TAG="${VERSION%-reF1nd}"
 
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "published_at=${PUBLISHED_AT}" >> "$GITHUB_OUTPUT"
           echo "docker_tag=${DOCKER_TAG}" >> "$GITHUB_OUTPUT"
           echo "稳定版上游版本号: ${VERSION}"
+          echo "稳定版上游发布时间: ${PUBLISHED_AT}"
           echo "稳定版 Docker tag: ${DOCKER_TAG}"
 
       - name: 读取稳定版记录
         id: stable_local
         run: |
           if [ -f .github/version/stable.txt ]; then
-            VERSION=$(cat .github/version/stable.txt)
+            if jq -e . .github/version/stable.txt >/dev/null 2>&1; then
+              VERSION=$(jq -r '.version // ""' .github/version/stable.txt)
+              PUBLISHED_AT=$(jq -r '.published_at // ""' .github/version/stable.txt)
+            else
+              VERSION=$(cat .github/version/stable.txt)
+              PUBLISHED_AT=""
+            fi
           else
             VERSION=""
+            PUBLISHED_AT=""
           fi
 
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "published_at=${PUBLISHED_AT}" >> "$GITHUB_OUTPUT"
 
       - name: 检查稳定版是否需要构建
         id: stable_check
@@ -98,18 +138,53 @@ jobs:
           NEED="false"
           SELECTED_BRANCH="${{ github.event.inputs.branch || 'both' }}"
           CURRENT="${{ steps.stable_version.outputs.version }}"
+          CURRENT_PUBLISHED_AT="${{ steps.stable_version.outputs.published_at }}"
           LOCAL="${{ steps.stable_local.outputs.version }}"
+          LOCAL_PUBLISHED_AT="${{ steps.stable_local.outputs.published_at }}"
+
+          version_gt() {
+            [[ -z "$2" ]] && return 0
+            [[ "$1" == "$2" ]] && return 1
+
+            version_key() {
+              local tag="${1#v}"
+              local base="${tag%%-reF1nd*}"
+              local suffix="${tag#*-reF1nd}"
+              local major minor patch revision
+
+              IFS=. read -r major minor patch _ <<< "$base"
+              if [[ "$suffix" == "$tag" || -z "$suffix" ]]; then
+                revision=0
+              else
+                revision="${suffix#.}"
+                [[ "$revision" =~ ^[0-9]+$ ]] || revision=0
+              fi
+
+              printf '%08d.%08d.%08d.%08d' "${major:-0}" "${minor:-0}" "${patch:-0}" "${revision:-0}"
+            }
+
+            [[ "$(version_key "$1")" > "$(version_key "$2")" ]]
+          }
 
           if [[ "$SELECTED_BRANCH" != "both" && "$SELECTED_BRANCH" != "stable" ]]; then
             echo "手动触发选择了 ${SELECTED_BRANCH}，跳过稳定版"
           elif [[ "${{ github.event.inputs.force_build }}" == "true" ]]; then
             NEED="true"
             echo "强制构建稳定版"
-          elif [[ "$CURRENT" != "$LOCAL" ]]; then
+          elif version_gt "$CURRENT" "$LOCAL"; then
             NEED="true"
             echo "检测到稳定版新版本"
             echo "远程: $CURRENT"
             echo "本地: $LOCAL"
+          elif [[ "$CURRENT" == "$LOCAL" && ( -z "$LOCAL_PUBLISHED_AT" || "$CURRENT_PUBLISHED_AT" > "$LOCAL_PUBLISHED_AT" ) ]]; then
+            NEED="true"
+            echo "检测到稳定版同版本重新发布"
+            echo "远程发布时间: $CURRENT_PUBLISHED_AT"
+            echo "本地记录发布时间: $LOCAL_PUBLISHED_AT"
+          elif [[ "$CURRENT" != "$LOCAL" ]]; then
+            echo "稳定版远程版本不是更新版本，跳过构建"
+            echo "远程: $CURRENT (${CURRENT_PUBLISHED_AT})"
+            echo "本地: $LOCAL (${LOCAL_PUBLISHED_AT})"
           fi
 
           echo "need_build=${NEED}" >> "$GITHUB_OUTPUT"
@@ -117,36 +192,74 @@ jobs:
       - name: 获取测试版版本号
         id: testing_version
         run: |
+          version_key() {
+            local tag="${1#v}"
+            local base="${tag%%-reF1nd*}"
+            local suffix="${tag#*-reF1nd}"
+            local major minor patch revision
+
+            IFS=. read -r major minor patch _ <<< "$base"
+            if [[ "$suffix" == "$tag" || -z "$suffix" ]]; then
+              revision=0
+            else
+              revision="${suffix#.}"
+              [[ "$revision" =~ ^[0-9]+$ ]] || revision=0
+            fi
+
+            printf '%08d.%08d.%08d.%08d' "${major:-0}" "${minor:-0}" "${patch:-0}" "${revision:-0}"
+          }
+
+          beijing_time() {
+            TZ=Asia/Shanghai date -d "$1" +'%Y-%m-%dT%H:%M:%S+08:00'
+          }
+
           API_URL="https://api.github.com/repos/${{ env.UPSTREAM_RELEASES_REPO }}/releases?per_page=100"
-          RELEASES_JSON=$(curl -fsSL \
+          RELEASE=$(curl -fsSL \
             -H "Accept: application/vnd.github+json" \
             -H "Authorization: Bearer ${{ github.token }}" \
             -H "X-GitHub-Api-Version: 2022-11-28" \
-            "$API_URL")
+            "$API_URL" |
+            jq -r '.[] | select(.draft == false and .prerelease == true) | [.tag_name, (.published_at // .created_at)] | @tsv' |
+            while IFS=$'\t' read -r tag published_at; do
+              printf '%s\t%s\t%s\n' "$(version_key "$tag")" "$published_at" "$tag"
+            done |
+            sort -t $'\t' -k1,1 -k2,2 |
+            tail -n 1)
 
-          VERSION=$(jq -r '[.[] | select(.prerelease == true)][0].tag_name // empty' <<< "$RELEASES_JSON")
-          if [[ -z "$VERSION" ]]; then
-            echo "Failed to read testing pre-release tag from $API_URL"
+          if [[ -z "$RELEASE" ]]; then
+            echo "未找到测试版 pre-release"
             exit 1
           fi
 
+          VERSION=$(cut -f3 <<< "$RELEASE")
+          PUBLISHED_AT=$(beijing_time "$(cut -f2 <<< "$RELEASE")")
           DOCKER_TAG="${VERSION%-reF1nd}"
 
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "published_at=${PUBLISHED_AT}" >> "$GITHUB_OUTPUT"
           echo "docker_tag=${DOCKER_TAG}" >> "$GITHUB_OUTPUT"
           echo "测试版上游版本号: ${VERSION}"
+          echo "测试版上游发布时间: ${PUBLISHED_AT}"
           echo "测试版 Docker tag: ${DOCKER_TAG}"
 
       - name: 读取测试版记录
         id: testing_local
         run: |
           if [ -f .github/version/testing.txt ]; then
-            VERSION=$(cat .github/version/testing.txt)
+            if jq -e . .github/version/testing.txt >/dev/null 2>&1; then
+              VERSION=$(jq -r '.version // ""' .github/version/testing.txt)
+              PUBLISHED_AT=$(jq -r '.published_at // ""' .github/version/testing.txt)
+            else
+              VERSION=$(cat .github/version/testing.txt)
+              PUBLISHED_AT=""
+            fi
           else
             VERSION=""
+            PUBLISHED_AT=""
           fi
 
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "published_at=${PUBLISHED_AT}" >> "$GITHUB_OUTPUT"
 
       - name: 检查测试版是否需要构建
         id: testing_check
@@ -154,18 +267,53 @@ jobs:
           NEED="false"
           SELECTED_BRANCH="${{ github.event.inputs.branch || 'both' }}"
           CURRENT="${{ steps.testing_version.outputs.version }}"
+          CURRENT_PUBLISHED_AT="${{ steps.testing_version.outputs.published_at }}"
           LOCAL="${{ steps.testing_local.outputs.version }}"
+          LOCAL_PUBLISHED_AT="${{ steps.testing_local.outputs.published_at }}"
+
+          version_gt() {
+            [[ -z "$2" ]] && return 0
+            [[ "$1" == "$2" ]] && return 1
+
+            version_key() {
+              local tag="${1#v}"
+              local base="${tag%%-reF1nd*}"
+              local suffix="${tag#*-reF1nd}"
+              local major minor patch revision
+
+              IFS=. read -r major minor patch _ <<< "$base"
+              if [[ "$suffix" == "$tag" || -z "$suffix" ]]; then
+                revision=0
+              else
+                revision="${suffix#.}"
+                [[ "$revision" =~ ^[0-9]+$ ]] || revision=0
+              fi
+
+              printf '%08d.%08d.%08d.%08d' "${major:-0}" "${minor:-0}" "${patch:-0}" "${revision:-0}"
+            }
+
+            [[ "$(version_key "$1")" > "$(version_key "$2")" ]]
+          }
 
           if [[ "$SELECTED_BRANCH" != "both" && "$SELECTED_BRANCH" != "testing" ]]; then
             echo "手动触发选择了 ${SELECTED_BRANCH}，跳过测试版"
           elif [[ "${{ github.event.inputs.force_build }}" == "true" ]]; then
             NEED="true"
             echo "强制构建测试版"
-          elif [[ "$CURRENT" != "$LOCAL" ]]; then
+          elif version_gt "$CURRENT" "$LOCAL"; then
             NEED="true"
             echo "检测到测试版新版本"
             echo "远程: $CURRENT"
             echo "本地: $LOCAL"
+          elif [[ "$CURRENT" == "$LOCAL" && ( -z "$LOCAL_PUBLISHED_AT" || "$CURRENT_PUBLISHED_AT" > "$LOCAL_PUBLISHED_AT" ) ]]; then
+            NEED="true"
+            echo "检测到测试版同版本重新发布"
+            echo "远程发布时间: $CURRENT_PUBLISHED_AT"
+            echo "本地记录发布时间: $LOCAL_PUBLISHED_AT"
+          elif [[ "$CURRENT" != "$LOCAL" ]]; then
+            echo "测试版远程版本不是更新版本，跳过构建"
+            echo "远程: $CURRENT (${CURRENT_PUBLISHED_AT})"
+            echo "本地: $LOCAL (${LOCAL_PUBLISHED_AT})"
           fi
 
           echo "need_build=${NEED}" >> "$GITHUB_OUTPUT"
@@ -233,7 +381,19 @@ jobs:
         working-directory: repo
         run: |
           mkdir -p .github/version
-          echo "${{ needs.check_versions.outputs.stable_version }}" > .github/version/stable.txt
+          jq -n \
+            --arg channel "stable" \
+            --arg version "${{ needs.check_versions.outputs.stable_version }}" \
+            --arg published_at "${{ needs.check_versions.outputs.stable_published_at }}" \
+            --arg built_at "$(TZ=Asia/Shanghai date +'%Y-%m-%dT%H:%M:%S+08:00')" \
+            --arg docker_tag "${{ needs.check_versions.outputs.stable_docker_tag }}" \
+            '{
+              channel: $channel,
+              version: $version,
+              published_at: $published_at,
+              built_at: $built_at,
+              docker_tag: $docker_tag
+            }' > .github/version/stable.txt
 
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
@@ -258,6 +418,7 @@ jobs:
         working-directory: repo
         run: |
           EXPECTED="${{ needs.check_versions.outputs.stable_version }}"
+          EXPECTED_PUBLISHED_AT="${{ needs.check_versions.outputs.stable_published_at }}"
           FILE=".github/version/stable.txt"
 
           if [[ ! -f "$FILE" ]]; then
@@ -265,24 +426,41 @@ jobs:
             exit 1
           fi
 
-          ACTUAL=$(cat "$FILE")
+          ACTUAL=$(jq -r '.version // ""' "$FILE")
+          ACTUAL_PUBLISHED_AT=$(jq -r '.published_at // ""' "$FILE")
+          ACTUAL_BUILT_AT=$(jq -r '.built_at // ""' "$FILE")
           if [[ "$ACTUAL" != "$EXPECTED" ]]; then
             echo "版本记录不正确"
             echo "期望: $EXPECTED"
             echo "实际: $ACTUAL"
             exit 1
           fi
-
-          git fetch origin "${GITHUB_REF_NAME}"
-          REMOTE=$(git show "origin/${GITHUB_REF_NAME}:${FILE}" 2>/dev/null || true)
-          if [[ "$REMOTE" != "$EXPECTED" ]]; then
-            echo "远端版本记录不正确"
-            echo "期望: $EXPECTED"
-            echo "远端: $REMOTE"
+          if [[ "$ACTUAL_PUBLISHED_AT" != "$EXPECTED_PUBLISHED_AT" ]]; then
+            echo "上游发布时间记录不正确"
+            echo "期望: $EXPECTED_PUBLISHED_AT"
+            echo "实际: $ACTUAL_PUBLISHED_AT"
+            exit 1
+          fi
+          if [[ -z "$ACTUAL_BUILT_AT" ]]; then
+            echo "构建时间记录为空"
             exit 1
           fi
 
-          echo "稳定版版本记录校验通过: $EXPECTED"
+          git fetch origin "${GITHUB_REF_NAME}"
+          REMOTE=$(git show "origin/${GITHUB_REF_NAME}:${FILE}" 2>/dev/null || true)
+          REMOTE_VERSION=$(jq -r '.version // ""' <<< "$REMOTE")
+          REMOTE_PUBLISHED_AT=$(jq -r '.published_at // ""' <<< "$REMOTE")
+          REMOTE_BUILT_AT=$(jq -r '.built_at // ""' <<< "$REMOTE")
+          if [[ "$REMOTE_VERSION" != "$EXPECTED" || "$REMOTE_PUBLISHED_AT" != "$EXPECTED_PUBLISHED_AT" || -z "$REMOTE_BUILT_AT" ]]; then
+            echo "远端版本记录不正确"
+            echo "期望: $EXPECTED"
+            echo "远端版本: $REMOTE_VERSION"
+            echo "远端发布时间: $REMOTE_PUBLISHED_AT"
+            echo "远端构建时间: $REMOTE_BUILT_AT"
+            exit 1
+          fi
+
+          echo "稳定版版本记录校验通过: $EXPECTED ($EXPECTED_PUBLISHED_AT)"
 
       - name: 构建摘要
         run: |
@@ -291,6 +469,7 @@ jobs:
           echo "| 项目 | 信息 |" >> "$GITHUB_STEP_SUMMARY"
           echo "|------|------|" >> "$GITHUB_STEP_SUMMARY"
           echo "| 上游版本 | ${{ needs.check_versions.outputs.stable_version }} |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| 上游发布时间 | ${{ needs.check_versions.outputs.stable_published_at }} |" >> "$GITHUB_STEP_SUMMARY"
           echo "| Docker tag | ${{ needs.check_versions.outputs.stable_docker_tag }} |" >> "$GITHUB_STEP_SUMMARY"
           echo "| 架构 | amd64, arm64, 386, arm/v7, arm/v6 |" >> "$GITHUB_STEP_SUMMARY"
           echo "| GHCR | \`${{ env.GHCR_IMAGE }}:${{ needs.check_versions.outputs.stable_docker_tag }}\` |" >> "$GITHUB_STEP_SUMMARY"
@@ -359,7 +538,19 @@ jobs:
         working-directory: repo
         run: |
           mkdir -p .github/version
-          echo "${{ needs.check_versions.outputs.testing_version }}" > .github/version/testing.txt
+          jq -n \
+            --arg channel "testing" \
+            --arg version "${{ needs.check_versions.outputs.testing_version }}" \
+            --arg published_at "${{ needs.check_versions.outputs.testing_published_at }}" \
+            --arg built_at "$(TZ=Asia/Shanghai date +'%Y-%m-%dT%H:%M:%S+08:00')" \
+            --arg docker_tag "${{ needs.check_versions.outputs.testing_docker_tag }}" \
+            '{
+              channel: $channel,
+              version: $version,
+              published_at: $published_at,
+              built_at: $built_at,
+              docker_tag: $docker_tag
+            }' > .github/version/testing.txt
 
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
@@ -384,6 +575,7 @@ jobs:
         working-directory: repo
         run: |
           EXPECTED="${{ needs.check_versions.outputs.testing_version }}"
+          EXPECTED_PUBLISHED_AT="${{ needs.check_versions.outputs.testing_published_at }}"
           FILE=".github/version/testing.txt"
 
           if [[ ! -f "$FILE" ]]; then
@@ -391,24 +583,41 @@ jobs:
             exit 1
           fi
 
-          ACTUAL=$(cat "$FILE")
+          ACTUAL=$(jq -r '.version // ""' "$FILE")
+          ACTUAL_PUBLISHED_AT=$(jq -r '.published_at // ""' "$FILE")
+          ACTUAL_BUILT_AT=$(jq -r '.built_at // ""' "$FILE")
           if [[ "$ACTUAL" != "$EXPECTED" ]]; then
             echo "版本记录不正确"
             echo "期望: $EXPECTED"
             echo "实际: $ACTUAL"
             exit 1
           fi
-
-          git fetch origin "${GITHUB_REF_NAME}"
-          REMOTE=$(git show "origin/${GITHUB_REF_NAME}:${FILE}" 2>/dev/null || true)
-          if [[ "$REMOTE" != "$EXPECTED" ]]; then
-            echo "远端版本记录不正确"
-            echo "期望: $EXPECTED"
-            echo "远端: $REMOTE"
+          if [[ "$ACTUAL_PUBLISHED_AT" != "$EXPECTED_PUBLISHED_AT" ]]; then
+            echo "上游发布时间记录不正确"
+            echo "期望: $EXPECTED_PUBLISHED_AT"
+            echo "实际: $ACTUAL_PUBLISHED_AT"
+            exit 1
+          fi
+          if [[ -z "$ACTUAL_BUILT_AT" ]]; then
+            echo "构建时间记录为空"
             exit 1
           fi
 
-          echo "测试版版本记录校验通过: $EXPECTED"
+          git fetch origin "${GITHUB_REF_NAME}"
+          REMOTE=$(git show "origin/${GITHUB_REF_NAME}:${FILE}" 2>/dev/null || true)
+          REMOTE_VERSION=$(jq -r '.version // ""' <<< "$REMOTE")
+          REMOTE_PUBLISHED_AT=$(jq -r '.published_at // ""' <<< "$REMOTE")
+          REMOTE_BUILT_AT=$(jq -r '.built_at // ""' <<< "$REMOTE")
+          if [[ "$REMOTE_VERSION" != "$EXPECTED" || "$REMOTE_PUBLISHED_AT" != "$EXPECTED_PUBLISHED_AT" || -z "$REMOTE_BUILT_AT" ]]; then
+            echo "远端版本记录不正确"
+            echo "期望: $EXPECTED"
+            echo "远端版本: $REMOTE_VERSION"
+            echo "远端发布时间: $REMOTE_PUBLISHED_AT"
+            echo "远端构建时间: $REMOTE_BUILT_AT"
+            exit 1
+          fi
+
+          echo "测试版版本记录校验通过: $EXPECTED ($EXPECTED_PUBLISHED_AT)"
 
       - name: 构建摘要
         run: |
@@ -417,6 +626,7 @@ jobs:
           echo "| 项目 | 信息 |" >> "$GITHUB_STEP_SUMMARY"
           echo "|------|------|" >> "$GITHUB_STEP_SUMMARY"
           echo "| 上游版本 | ${{ needs.check_versions.outputs.testing_version }} |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| 上游发布时间 | ${{ needs.check_versions.outputs.testing_published_at }} |" >> "$GITHUB_STEP_SUMMARY"
           echo "| Docker tag | ${{ needs.check_versions.outputs.testing_docker_tag }} |" >> "$GITHUB_STEP_SUMMARY"
           echo "| 架构 | amd64, arm64, 386, arm/v7, arm/v6 |" >> "$GITHUB_STEP_SUMMARY"
           echo "| GHCR | \`${{ env.GHCR_IMAGE }}:${{ needs.check_versions.outputs.testing_docker_tag }}\` |" >> "$GITHUB_STEP_SUMMARY"
