@@ -116,14 +116,11 @@ jobs:
       - name: 读取稳定版记录
         id: stable_local
         run: |
-          if [ -f .github/version/stable.txt ]; then
-            if jq -e . .github/version/stable.txt >/dev/null 2>&1; then
-              VERSION=$(jq -r '.version // ""' .github/version/stable.txt)
-              PUBLISHED_AT=$(jq -r '.published_at // ""' .github/version/stable.txt)
-            else
-              VERSION=$(cat .github/version/stable.txt)
-              PUBLISHED_AT=""
-            fi
+          RECORD_FILE=".github/version/stable.json"
+
+          if [ -f "$RECORD_FILE" ]; then
+            VERSION=$(jq -r '.version // ""' "$RECORD_FILE")
+            PUBLISHED_AT=$(jq -r '.published_at // ""' "$RECORD_FILE")
           else
             VERSION=""
             PUBLISHED_AT=""
@@ -245,14 +242,11 @@ jobs:
       - name: 读取测试版记录
         id: testing_local
         run: |
-          if [ -f .github/version/testing.txt ]; then
-            if jq -e . .github/version/testing.txt >/dev/null 2>&1; then
-              VERSION=$(jq -r '.version // ""' .github/version/testing.txt)
-              PUBLISHED_AT=$(jq -r '.published_at // ""' .github/version/testing.txt)
-            else
-              VERSION=$(cat .github/version/testing.txt)
-              PUBLISHED_AT=""
-            fi
+          RECORD_FILE=".github/version/testing.json"
+
+          if [ -f "$RECORD_FILE" ]; then
+            VERSION=$(jq -r '.version // ""' "$RECORD_FILE")
+            PUBLISHED_AT=$(jq -r '.published_at // ""' "$RECORD_FILE")
           else
             VERSION=""
             PUBLISHED_AT=""
@@ -381,6 +375,7 @@ jobs:
         working-directory: repo
         run: |
           mkdir -p .github/version
+          FILE=".github/version/stable.json"
           jq -n \
             --arg channel "stable" \
             --arg version "${{ needs.check_versions.outputs.stable_version }}" \
@@ -393,11 +388,11 @@ jobs:
               published_at: $published_at,
               built_at: $built_at,
               docker_tag: $docker_tag
-            }' > .github/version/stable.txt
+            }' > "$FILE"
 
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add .github/version/stable.txt
+          git add "$FILE"
 
           if git diff --cached --quiet; then
             echo "No changes"
@@ -419,7 +414,7 @@ jobs:
         run: |
           EXPECTED="${{ needs.check_versions.outputs.stable_version }}"
           EXPECTED_PUBLISHED_AT="${{ needs.check_versions.outputs.stable_published_at }}"
-          FILE=".github/version/stable.txt"
+          FILE=".github/version/stable.json"
 
           if [[ ! -f "$FILE" ]]; then
             echo "版本记录文件不存在: $FILE"
@@ -538,6 +533,7 @@ jobs:
         working-directory: repo
         run: |
           mkdir -p .github/version
+          FILE=".github/version/testing.json"
           jq -n \
             --arg channel "testing" \
             --arg version "${{ needs.check_versions.outputs.testing_version }}" \
@@ -550,11 +546,11 @@ jobs:
               published_at: $published_at,
               built_at: $built_at,
               docker_tag: $docker_tag
-            }' > .github/version/testing.txt
+            }' > "$FILE"
 
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add .github/version/testing.txt
+          git add "$FILE"
 
           if git diff --cached --quiet; then
             echo "No changes"
@@ -576,7 +572,7 @@ jobs:
         run: |
           EXPECTED="${{ needs.check_versions.outputs.testing_version }}"
           EXPECTED_PUBLISHED_AT="${{ needs.check_versions.outputs.testing_published_at }}"
-          FILE=".github/version/testing.txt"
+          FILE=".github/version/testing.json"
 
           if [[ ! -f "$FILE" ]]; then
             echo "版本记录文件不存在: $FILE"
