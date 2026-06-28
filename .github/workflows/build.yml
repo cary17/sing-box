@@ -7,12 +7,12 @@ on:
   workflow_dispatch:
     inputs:
       force_build:
-        description: "寮哄埗鏋勫缓"
+        description: "强制构建"
         required: false
         default: false
         type: boolean
       branch:
-        description: "閫夋嫨鍒嗘敮"
+        description: "选择分支"
         required: false
         default: "both"
         type: choice
@@ -30,21 +30,21 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  # 涓婃父浠撳簱閰嶇疆
+  # 上游仓库配置
   UPSTREAM_REPO: "https://github.com/reF1nd/sing-box.git"
   UPSTREAM_STABLE_BRANCH: "reF1nd-stable"
   UPSTREAM_TESTING_BRANCH: "reF1nd-testing"
   UPSTREAM_RELEASES_REPO: "reF1nd/sing-box-releases"
   UPSTREAM_SOURCE_REPO: "reF1nd/sing-box"
 
-  # 闀滃儚浠撳簱閰嶇疆
+  # 镜像仓库配置
   GHCR_IMAGE: "ghcr.io/${{ github.repository_owner }}/sing-box"
   DOCKERHUB_IMAGE: "cary17/sing-box"
 
 jobs:
-  # ==================== 妫€娴嬬増锟?====================
+  # ==================== 检测版本 ====================
   check_versions:
-    name: 妫€娴嬩笂娓哥増锟?
+    name: 检测上游版本
     runs-on: ubuntu-latest
     outputs:
       stable_version: ${{ steps.stable_version.outputs.version }}
@@ -61,7 +61,7 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: 鑾峰彇绋冲畾鐗堢増鏈彿
+      - name: 获取稳定版版本号
         id: stable_version
         run: |
           RELEASES_JSON="$RUNNER_TEMP/stable-releases.json"
@@ -96,7 +96,7 @@ jobs:
           echo "stable upstream source: ${SOURCE}"
           echo "stable Docker tag: ${DOCKER_TAG}"
 
-      - name: 璇诲彇绋冲畾鐗堣锟?
+      - name: 读取稳定版记录
         id: stable_local
         run: |
           RECORD_FILE=".github/version/stable.json"
@@ -112,7 +112,7 @@ jobs:
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
           echo "published_at=${PUBLISHED_AT}" >> "$GITHUB_OUTPUT"
 
-      - name: 妫€鏌ョǔ瀹氱増鏄惁闇€瑕佹瀯锟?
+      - name: 检查稳定版是否需要构建
         id: stable_check
         run: |
           NEED="false"
@@ -158,29 +158,29 @@ jobs:
           }
 
           if [[ "$SELECTED_BRANCH" != "both" && "$SELECTED_BRANCH" != "stable" ]]; then
-            echo "鎵嬪姩瑙﹀彂閫夋嫨锟?${SELECTED_BRANCH}锛岃烦杩囩ǔ瀹氱増"
+            echo "手动触发选择了 ${SELECTED_BRANCH}，跳过稳定版"
           elif [[ "${{ github.event.inputs.force_build }}" == "true" ]]; then
             NEED="true"
-            echo "force build stable"
+            echo "强制构建稳定版"
           elif version_gt "$CURRENT" "$LOCAL"; then
             NEED="true"
-            echo "妫€娴嬪埌绋冲畾鐗堟柊鐗堟湰"
-            echo "杩滅▼: $CURRENT"
-            echo "鏈湴: $LOCAL"
+            echo "检测到稳定版新版本"
+            echo "远程: $CURRENT"
+            echo "本地: $LOCAL"
           elif [[ "$CURRENT" == "$LOCAL" && ( -z "$LOCAL_PUBLISHED_AT" || "$CURRENT_PUBLISHED_AT" > "$LOCAL_PUBLISHED_AT" ) ]]; then
             NEED="true"
-            echo "妫€娴嬪埌绋冲畾鐗堝悓鐗堟湰閲嶆柊鍙戝竷"
-            echo "杩滅▼鍙戝竷鏃堕棿: $CURRENT_PUBLISHED_AT"
-            echo "鏈湴璁板綍鍙戝竷鏃堕棿: $LOCAL_PUBLISHED_AT"
+            echo "检测到稳定版同版本重新发布"
+            echo "远程发布时间: $CURRENT_PUBLISHED_AT"
+            echo "本地记录发布时间: $LOCAL_PUBLISHED_AT"
           elif [[ "$CURRENT" != "$LOCAL" ]]; then
-            echo "绋冲畾鐗堣繙绋嬬増鏈笉鏄洿鏂扮増鏈紝璺宠繃鏋勫缓"
-            echo "杩滅▼: $CURRENT (${CURRENT_PUBLISHED_AT})"
-            echo "鏈湴: $LOCAL (${LOCAL_PUBLISHED_AT})"
+            echo "稳定版远程版本不是更新版本，跳过构建"
+            echo "远程: $CURRENT (${CURRENT_PUBLISHED_AT})"
+            echo "本地: $LOCAL (${LOCAL_PUBLISHED_AT})"
           fi
 
           echo "need_build=${NEED}" >> "$GITHUB_OUTPUT"
 
-      - name: 鑾峰彇娴嬭瘯鐗堢増鏈彿
+      - name: 获取测试版版本号
         id: testing_version
         run: |
           RELEASES_JSON="$RUNNER_TEMP/testing-releases.json"
@@ -215,7 +215,7 @@ jobs:
           echo "testing upstream source: ${SOURCE}"
           echo "testing Docker tag: ${DOCKER_TAG}"
 
-      - name: 璇诲彇娴嬭瘯鐗堣锟?
+      - name: 读取测试版记录
         id: testing_local
         run: |
           RECORD_FILE=".github/version/testing.json"
@@ -231,7 +231,7 @@ jobs:
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
           echo "published_at=${PUBLISHED_AT}" >> "$GITHUB_OUTPUT"
 
-      - name: 妫€鏌ユ祴璇曠増鏄惁闇€瑕佹瀯锟?
+      - name: 检查测试版是否需要构建
         id: testing_check
         run: |
           NEED="false"
@@ -277,43 +277,43 @@ jobs:
           }
 
           if [[ "$SELECTED_BRANCH" != "both" && "$SELECTED_BRANCH" != "testing" ]]; then
-            echo "鎵嬪姩瑙﹀彂閫夋嫨锟?${SELECTED_BRANCH}锛岃烦杩囨祴璇曠増"
+            echo "手动触发选择了 ${SELECTED_BRANCH}，跳过测试版"
           elif [[ "${{ github.event.inputs.force_build }}" == "true" ]]; then
             NEED="true"
-            echo "force build testing"
+            echo "强制构建测试版"
           elif version_gt "$CURRENT" "$LOCAL"; then
             NEED="true"
-            echo "妫€娴嬪埌娴嬭瘯鐗堟柊鐗堟湰"
-            echo "杩滅▼: $CURRENT"
-            echo "鏈湴: $LOCAL"
+            echo "检测到测试版新版本"
+            echo "远程: $CURRENT"
+            echo "本地: $LOCAL"
           elif [[ "$CURRENT" == "$LOCAL" && ( -z "$LOCAL_PUBLISHED_AT" || "$CURRENT_PUBLISHED_AT" > "$LOCAL_PUBLISHED_AT" ) ]]; then
             NEED="true"
-            echo "妫€娴嬪埌娴嬭瘯鐗堝悓鐗堟湰閲嶆柊鍙戝竷"
-            echo "杩滅▼鍙戝竷鏃堕棿: $CURRENT_PUBLISHED_AT"
-            echo "鏈湴璁板綍鍙戝竷鏃堕棿: $LOCAL_PUBLISHED_AT"
+            echo "检测到测试版同版本重新发布"
+            echo "远程发布时间: $CURRENT_PUBLISHED_AT"
+            echo "本地记录发布时间: $LOCAL_PUBLISHED_AT"
           elif [[ "$CURRENT" != "$LOCAL" ]]; then
-            echo "娴嬭瘯鐗堣繙绋嬬増鏈笉鏄洿鏂扮増鏈紝璺宠繃鏋勫缓"
-            echo "杩滅▼: $CURRENT (${CURRENT_PUBLISHED_AT})"
-            echo "鏈湴: $LOCAL (${LOCAL_PUBLISHED_AT})"
+            echo "测试版远程版本不是更新版本，跳过构建"
+            echo "远程: $CURRENT (${CURRENT_PUBLISHED_AT})"
+            echo "本地: $LOCAL (${LOCAL_PUBLISHED_AT})"
           fi
 
           echo "need_build=${NEED}" >> "$GITHUB_OUTPUT"
 
-  # ==================== 鏋勫缓绋冲畾锟?====================
+  # ==================== 构建稳定版 ====================
   build_stable:
-    name: 鏋勫缓绋冲畾鐗堥暅锟?
+    name: 构建稳定版镜像
     runs-on: ubuntu-latest
     needs: check_versions
     if: >-
       needs.check_versions.outputs.stable_need_build == 'true' &&
       (github.event_name != 'workflow_dispatch' || github.event.inputs.branch == 'both' || github.event.inputs.branch == 'stable')
     steps:
-      - name: 鍏嬮殕涓婃父浠ｇ爜
+      - name: 克隆上游代码
         run: |
-          echo "鍏嬮殕 ${{ env.UPSTREAM_STABLE_BRANCH }} 鍒嗘敮..."
+          echo "克隆 ${{ env.UPSTREAM_STABLE_BRANCH }} 分支..."
           git clone --depth 1 --branch ${{ env.UPSTREAM_STABLE_BRANCH }} \
             ${{ env.UPSTREAM_REPO }} src
-          echo "浠ｇ爜鍏嬮殕瀹屾垚"
+          echo "代码克隆完成"
 
       - name: Setup QEMU
         uses: docker/setup-qemu-action@v3
@@ -334,7 +334,7 @@ jobs:
           username: cary17
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      - name: 鏋勫缓骞舵帹閫佺ǔ瀹氱増澶氭灦鏋勯暅锟?
+      - name: 构建并推送稳定版多架构镜像
         uses: docker/build-push-action@v6
         with:
           context: src
@@ -358,7 +358,7 @@ jobs:
           token: ${{ secrets.GITHUB_TOKEN }}
           fetch-depth: 0
 
-      - name: 鏇存柊绋冲畾鐗堢増鏈锟?
+      - name: 更新稳定版版本记录
         working-directory: repo
         run: |
           mkdir -p .github/version
@@ -396,7 +396,7 @@ jobs:
             exit 1
           fi
 
-      - name: 妫€鏌ョǔ瀹氱増鐗堟湰璁板綍
+      - name: 检查稳定版版本记录
         working-directory: repo
         run: |
           EXPECTED="${{ needs.check_versions.outputs.stable_version }}"
@@ -404,7 +404,7 @@ jobs:
           FILE=".github/version/stable.json"
 
           if [[ ! -f "$FILE" ]]; then
-            echo "鐗堟湰璁板綍鏂囦欢涓嶅瓨锟? $FILE"
+            echo "版本记录文件不存在: $FILE"
             exit 1
           fi
 
@@ -412,19 +412,19 @@ jobs:
           ACTUAL_PUBLISHED_AT=$(jq -r '.published_at // ""' "$FILE")
           ACTUAL_BUILT_AT=$(jq -r '.built_at // ""' "$FILE")
           if [[ "$ACTUAL" != "$EXPECTED" ]]; then
-            echo "version record mismatch"
-            echo "鏈熸湜: $EXPECTED"
-            echo "瀹為檯: $ACTUAL"
+            echo "版本记录不正确"
+            echo "期望: $EXPECTED"
+            echo "实际: $ACTUAL"
             exit 1
           fi
           if [[ "$ACTUAL_PUBLISHED_AT" != "$EXPECTED_PUBLISHED_AT" ]]; then
-            echo "published_at record mismatch"
-            echo "鏈熸湜: $EXPECTED_PUBLISHED_AT"
-            echo "瀹為檯: $ACTUAL_PUBLISHED_AT"
+            echo "上游发布时间记录不正确"
+            echo "期望: $EXPECTED_PUBLISHED_AT"
+            echo "实际: $ACTUAL_PUBLISHED_AT"
             exit 1
           fi
           if [[ -z "$ACTUAL_BUILT_AT" ]]; then
-            echo "鏋勫缓鏃堕棿璁板綍涓虹┖"
+            echo "构建时间记录为空"
             exit 1
           fi
 
@@ -434,46 +434,46 @@ jobs:
           REMOTE_PUBLISHED_AT=$(jq -r '.published_at // ""' <<< "$REMOTE")
           REMOTE_BUILT_AT=$(jq -r '.built_at // ""' <<< "$REMOTE")
           if [[ "$REMOTE_VERSION" != "$EXPECTED" || "$REMOTE_PUBLISHED_AT" != "$EXPECTED_PUBLISHED_AT" || -z "$REMOTE_BUILT_AT" ]]; then
-            echo "remote version record mismatch"
-            echo "鏈熸湜: $EXPECTED"
-            echo "杩滅鐗堟湰: $REMOTE_VERSION"
-            echo "杩滅鍙戝竷鏃堕棿: $REMOTE_PUBLISHED_AT"
-            echo "杩滅鏋勫缓鏃堕棿: $REMOTE_BUILT_AT"
+            echo "远端版本记录不正确"
+            echo "期望: $EXPECTED"
+            echo "远端版本: $REMOTE_VERSION"
+            echo "远端发布时间: $REMOTE_PUBLISHED_AT"
+            echo "远端构建时间: $REMOTE_BUILT_AT"
             exit 1
           fi
 
-          echo "绋冲畾鐗堢増鏈褰曟牎楠岄€氳繃: $EXPECTED ($EXPECTED_PUBLISHED_AT)"
+          echo "稳定版版本记录校验通过: $EXPECTED ($EXPECTED_PUBLISHED_AT)"
 
-      - name: 鏋勫缓鎽樿
+      - name: 构建摘要
         run: |
-          echo "## 绋冲畾鐗堟瀯寤哄畬锟? >> "$GITHUB_STEP_SUMMARY"
+          echo "## 稳定版构建完成" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "| 椤圭洰 | 淇℃伅 |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| 项目 | 信息 |" >> "$GITHUB_STEP_SUMMARY"
           echo "|------|------|" >> "$GITHUB_STEP_SUMMARY"
-          echo "| 涓婃父鐗堟湰 | ${{ needs.check_versions.outputs.stable_version }} |" >> "$GITHUB_STEP_SUMMARY"
-          echo "| 涓婃父鍙戝竷鏃堕棿 | ${{ needs.check_versions.outputs.stable_published_at }} |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| 上游版本 | ${{ needs.check_versions.outputs.stable_version }} |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| 上游发布时间 | ${{ needs.check_versions.outputs.stable_published_at }} |" >> "$GITHUB_STEP_SUMMARY"
           echo "| Docker tag | ${{ needs.check_versions.outputs.stable_docker_tag }} |" >> "$GITHUB_STEP_SUMMARY"
-          echo "| 鏋舵瀯 | amd64, arm64, 386, arm/v7, arm/v6 |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| 架构 | amd64, arm64, 386, arm/v7, arm/v6 |" >> "$GITHUB_STEP_SUMMARY"
           echo "| GHCR | \`${{ env.GHCR_IMAGE }}:${{ needs.check_versions.outputs.stable_docker_tag }}\` |" >> "$GITHUB_STEP_SUMMARY"
           echo "| GHCR stable | \`${{ env.GHCR_IMAGE }}:stable\` |" >> "$GITHUB_STEP_SUMMARY"
           echo "| Docker Hub | \`${{ env.DOCKERHUB_IMAGE }}:${{ needs.check_versions.outputs.stable_docker_tag }}\` |" >> "$GITHUB_STEP_SUMMARY"
           echo "| Docker Hub stable | \`${{ env.DOCKERHUB_IMAGE }}:stable\` |" >> "$GITHUB_STEP_SUMMARY"
 
-  # ==================== 鏋勫缓娴嬭瘯锟?====================
+  # ==================== 构建测试版 ====================
   build_testing:
-    name: 鏋勫缓娴嬭瘯鐗堥暅锟?
+    name: 构建测试版镜像
     runs-on: ubuntu-latest
     needs: check_versions
     if: >-
       needs.check_versions.outputs.testing_need_build == 'true' &&
       (github.event_name != 'workflow_dispatch' || github.event.inputs.branch == 'both' || github.event.inputs.branch == 'testing')
     steps:
-      - name: 鍏嬮殕涓婃父浠ｇ爜
+      - name: 克隆上游代码
         run: |
-          echo "鍏嬮殕 ${{ env.UPSTREAM_TESTING_BRANCH }} 鍒嗘敮..."
+          echo "克隆 ${{ env.UPSTREAM_TESTING_BRANCH }} 分支..."
           git clone --depth 1 --branch ${{ env.UPSTREAM_TESTING_BRANCH }} \
             ${{ env.UPSTREAM_REPO }} src
-          echo "浠ｇ爜鍏嬮殕瀹屾垚"
+          echo "代码克隆完成"
 
       - name: Setup QEMU
         uses: docker/setup-qemu-action@v3
@@ -494,7 +494,7 @@ jobs:
           username: cary17
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      - name: 鏋勫缓骞舵帹閫佹祴璇曠増澶氭灦鏋勯暅锟?
+      - name: 构建并推送测试版多架构镜像
         uses: docker/build-push-action@v6
         with:
           context: src
@@ -516,7 +516,7 @@ jobs:
           token: ${{ secrets.GITHUB_TOKEN }}
           fetch-depth: 0
 
-      - name: 鏇存柊娴嬭瘯鐗堢増鏈锟?
+      - name: 更新测试版版本记录
         working-directory: repo
         run: |
           mkdir -p .github/version
@@ -554,7 +554,7 @@ jobs:
             exit 1
           fi
 
-      - name: 妫€鏌ユ祴璇曠増鐗堟湰璁板綍
+      - name: 检查测试版版本记录
         working-directory: repo
         run: |
           EXPECTED="${{ needs.check_versions.outputs.testing_version }}"
@@ -562,7 +562,7 @@ jobs:
           FILE=".github/version/testing.json"
 
           if [[ ! -f "$FILE" ]]; then
-            echo "鐗堟湰璁板綍鏂囦欢涓嶅瓨锟? $FILE"
+            echo "版本记录文件不存在: $FILE"
             exit 1
           fi
 
@@ -570,19 +570,19 @@ jobs:
           ACTUAL_PUBLISHED_AT=$(jq -r '.published_at // ""' "$FILE")
           ACTUAL_BUILT_AT=$(jq -r '.built_at // ""' "$FILE")
           if [[ "$ACTUAL" != "$EXPECTED" ]]; then
-            echo "version record mismatch"
-            echo "鏈熸湜: $EXPECTED"
-            echo "瀹為檯: $ACTUAL"
+            echo "版本记录不正确"
+            echo "期望: $EXPECTED"
+            echo "实际: $ACTUAL"
             exit 1
           fi
           if [[ "$ACTUAL_PUBLISHED_AT" != "$EXPECTED_PUBLISHED_AT" ]]; then
-            echo "published_at record mismatch"
-            echo "鏈熸湜: $EXPECTED_PUBLISHED_AT"
-            echo "瀹為檯: $ACTUAL_PUBLISHED_AT"
+            echo "上游发布时间记录不正确"
+            echo "期望: $EXPECTED_PUBLISHED_AT"
+            echo "实际: $ACTUAL_PUBLISHED_AT"
             exit 1
           fi
           if [[ -z "$ACTUAL_BUILT_AT" ]]; then
-            echo "鏋勫缓鏃堕棿璁板綍涓虹┖"
+            echo "构建时间记录为空"
             exit 1
           fi
 
@@ -592,26 +592,26 @@ jobs:
           REMOTE_PUBLISHED_AT=$(jq -r '.published_at // ""' <<< "$REMOTE")
           REMOTE_BUILT_AT=$(jq -r '.built_at // ""' <<< "$REMOTE")
           if [[ "$REMOTE_VERSION" != "$EXPECTED" || "$REMOTE_PUBLISHED_AT" != "$EXPECTED_PUBLISHED_AT" || -z "$REMOTE_BUILT_AT" ]]; then
-            echo "remote version record mismatch"
-            echo "鏈熸湜: $EXPECTED"
-            echo "杩滅鐗堟湰: $REMOTE_VERSION"
-            echo "杩滅鍙戝竷鏃堕棿: $REMOTE_PUBLISHED_AT"
-            echo "杩滅鏋勫缓鏃堕棿: $REMOTE_BUILT_AT"
+            echo "远端版本记录不正确"
+            echo "期望: $EXPECTED"
+            echo "远端版本: $REMOTE_VERSION"
+            echo "远端发布时间: $REMOTE_PUBLISHED_AT"
+            echo "远端构建时间: $REMOTE_BUILT_AT"
             exit 1
           fi
 
-          echo "娴嬭瘯鐗堢増鏈褰曟牎楠岄€氳繃: $EXPECTED ($EXPECTED_PUBLISHED_AT)"
+          echo "测试版版本记录校验通过: $EXPECTED ($EXPECTED_PUBLISHED_AT)"
 
-      - name: 鏋勫缓鎽樿
+      - name: 构建摘要
         run: |
-          echo "## 娴嬭瘯鐗堟瀯寤哄畬锟? >> "$GITHUB_STEP_SUMMARY"
+          echo "## 测试版构建完成" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "| 椤圭洰 | 淇℃伅 |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| 项目 | 信息 |" >> "$GITHUB_STEP_SUMMARY"
           echo "|------|------|" >> "$GITHUB_STEP_SUMMARY"
-          echo "| 涓婃父鐗堟湰 | ${{ needs.check_versions.outputs.testing_version }} |" >> "$GITHUB_STEP_SUMMARY"
-          echo "| 涓婃父鍙戝竷鏃堕棿 | ${{ needs.check_versions.outputs.testing_published_at }} |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| 上游版本 | ${{ needs.check_versions.outputs.testing_version }} |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| 上游发布时间 | ${{ needs.check_versions.outputs.testing_published_at }} |" >> "$GITHUB_STEP_SUMMARY"
           echo "| Docker tag | ${{ needs.check_versions.outputs.testing_docker_tag }} |" >> "$GITHUB_STEP_SUMMARY"
-          echo "| 鏋舵瀯 | amd64, arm64, 386, arm/v7, arm/v6 |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| 架构 | amd64, arm64, 386, arm/v7, arm/v6 |" >> "$GITHUB_STEP_SUMMARY"
           echo "| GHCR | \`${{ env.GHCR_IMAGE }}:${{ needs.check_versions.outputs.testing_docker_tag }}\` |" >> "$GITHUB_STEP_SUMMARY"
           echo "| GHCR testing | \`${{ env.GHCR_IMAGE }}:testing\` |" >> "$GITHUB_STEP_SUMMARY"
           echo "| Docker Hub | \`${{ env.DOCKERHUB_IMAGE }}:${{ needs.check_versions.outputs.testing_docker_tag }}\` |" >> "$GITHUB_STEP_SUMMARY"
