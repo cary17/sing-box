@@ -118,9 +118,7 @@ jobs:
           NEED="false"
           SELECTED_BRANCH="${{ github.event.inputs.branch || 'both' }}"
           CURRENT="${{ steps.stable_version.outputs.version }}"
-          CURRENT_PUBLISHED_AT="${{ steps.stable_version.outputs.published_at }}"
           LOCAL="${{ steps.stable_local.outputs.version }}"
-          LOCAL_PUBLISHED_AT="${{ steps.stable_local.outputs.published_at }}"
 
           version_gt() {
             [[ -z "$2" ]] && return 0
@@ -167,15 +165,10 @@ jobs:
             echo "检测到稳定版新版本"
             echo "远程: $CURRENT"
             echo "本地: $LOCAL"
-          elif [[ "$CURRENT" == "$LOCAL" && ( -z "$LOCAL_PUBLISHED_AT" || "$CURRENT_PUBLISHED_AT" > "$LOCAL_PUBLISHED_AT" ) ]]; then
-            NEED="true"
-            echo "检测到稳定版同版本重新发布"
-            echo "远程发布时间: $CURRENT_PUBLISHED_AT"
-            echo "本地记录发布时间: $LOCAL_PUBLISHED_AT"
           elif [[ "$CURRENT" != "$LOCAL" ]]; then
             echo "稳定版远程版本不是更新版本，跳过构建"
-            echo "远程: $CURRENT (${CURRENT_PUBLISHED_AT})"
-            echo "本地: $LOCAL (${LOCAL_PUBLISHED_AT})"
+            echo "远程: $CURRENT"
+            echo "本地: $LOCAL"
           fi
 
           echo "need_build=${NEED}" >> "$GITHUB_OUTPUT"
@@ -237,9 +230,7 @@ jobs:
           NEED="false"
           SELECTED_BRANCH="${{ github.event.inputs.branch || 'both' }}"
           CURRENT="${{ steps.testing_version.outputs.version }}"
-          CURRENT_PUBLISHED_AT="${{ steps.testing_version.outputs.published_at }}"
           LOCAL="${{ steps.testing_local.outputs.version }}"
-          LOCAL_PUBLISHED_AT="${{ steps.testing_local.outputs.published_at }}"
 
           version_gt() {
             [[ -z "$2" ]] && return 0
@@ -286,15 +277,10 @@ jobs:
             echo "检测到测试版新版本"
             echo "远程: $CURRENT"
             echo "本地: $LOCAL"
-          elif [[ "$CURRENT" == "$LOCAL" && ( -z "$LOCAL_PUBLISHED_AT" || "$CURRENT_PUBLISHED_AT" > "$LOCAL_PUBLISHED_AT" ) ]]; then
-            NEED="true"
-            echo "检测到测试版同版本重新发布"
-            echo "远程发布时间: $CURRENT_PUBLISHED_AT"
-            echo "本地记录发布时间: $LOCAL_PUBLISHED_AT"
           elif [[ "$CURRENT" != "$LOCAL" ]]; then
             echo "测试版远程版本不是更新版本，跳过构建"
-            echo "远程: $CURRENT (${CURRENT_PUBLISHED_AT})"
-            echo "本地: $LOCAL (${LOCAL_PUBLISHED_AT})"
+            echo "远程: $CURRENT"
+            echo "本地: $LOCAL"
           fi
 
           echo "need_build=${NEED}" >> "$GITHUB_OUTPUT"
