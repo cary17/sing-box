@@ -61,41 +61,6 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: 获取稳定版版本号
-        id: stable_version
-        run: |
-          RELEASES_JSON="$RUNNER_TEMP/stable-releases.json"
-          TAGS_JSON="$RUNNER_TEMP/stable-tags.json"
-          TAG_PUBLISHED_AT="$(TZ=Asia/Shanghai date +'%Y-%m-%dT%H:%M:%S+08:00')"
-
-          curl -fsSL \
-            -H "Accept: application/vnd.github+json" \
-            -H "Authorization: Bearer ${{ github.token }}" \
-            -H "X-GitHub-Api-Version: 2022-11-28" \
-            "https://api.github.com/repos/${{ env.UPSTREAM_RELEASES_REPO }}/releases?per_page=100" \
-            -o "$RELEASES_JSON"
-
-          curl -fsSL \
-            -H "Accept: application/vnd.github+json" \
-            -H "Authorization: Bearer ${{ github.token }}" \
-            -H "X-GitHub-Api-Version: 2022-11-28" \
-            "https://api.github.com/repos/${{ env.UPSTREAM_SOURCE_REPO }}/tags?per_page=100" \
-            -o "$TAGS_JSON"
-
-          SELECTED="$(bash scripts/select-upstream-version.sh stable "$RELEASES_JSON" "$TAGS_JSON" "$TAG_PUBLISHED_AT")"
-          VERSION="$(jq -r '.version' <<< "$SELECTED")"
-          PUBLISHED_AT="$(jq -r '.published_at' <<< "$SELECTED")"
-          DOCKER_TAG="$(jq -r '.docker_tag' <<< "$SELECTED")"
-          SOURCE="$(jq -r '.source' <<< "$SELECTED")"
-
-          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
-          echo "published_at=${PUBLISHED_AT}" >> "$GITHUB_OUTPUT"
-          echo "docker_tag=${DOCKER_TAG}" >> "$GITHUB_OUTPUT"
-          echo "stable upstream version: ${VERSION}"
-          echo "stable upstream published at: ${PUBLISHED_AT}"
-          echo "stable upstream source: ${SOURCE}"
-          echo "stable Docker tag: ${DOCKER_TAG}"
-
       - name: 读取稳定版记录
         id: stable_local
         run: |
@@ -111,6 +76,51 @@ jobs:
 
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
           echo "published_at=${PUBLISHED_AT}" >> "$GITHUB_OUTPUT"
+
+      - name: 获取稳定版版本号
+        id: stable_version
+        run: |
+          RELEASES_JSON="$RUNNER_TEMP/stable-releases.json"
+          TAGS_JSON="$RUNNER_TEMP/stable-tags.json"
+          TAG_PUBLISHED_AT="$(TZ=Asia/Shanghai date +'%Y-%m-%dT%H:%M:%S+08:00')"
+
+          curl -fsSL \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer ${{ github.token }}" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/${{ env.UPSTREAM_RELEASES_REPO }}/releases?per_page=100" \
+            -o "$RELEASES_JSON"
+
+          if SELECTED="$(bash scripts/select-upstream-version.sh stable "$RELEASES_JSON" "" "${{ steps.stable_local.outputs.version }}" "$TAG_PUBLISHED_AT")"; then
+            :
+          else
+            STATUS=$?
+            if [[ "$STATUS" -ne 3 ]]; then
+              exit "$STATUS"
+            fi
+
+            curl -fsSL \
+              -H "Accept: application/vnd.github+json" \
+              -H "Authorization: Bearer ${{ github.token }}" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "https://api.github.com/repos/${{ env.UPSTREAM_SOURCE_REPO }}/tags?per_page=100" \
+              -o "$TAGS_JSON"
+
+            SELECTED="$(bash scripts/select-upstream-version.sh stable "$RELEASES_JSON" "$TAGS_JSON" "${{ steps.stable_local.outputs.version }}" "$TAG_PUBLISHED_AT")"
+          fi
+
+          VERSION="$(jq -r '.version' <<< "$SELECTED")"
+          PUBLISHED_AT="$(jq -r '.published_at' <<< "$SELECTED")"
+          DOCKER_TAG="$(jq -r '.docker_tag' <<< "$SELECTED")"
+          SOURCE="$(jq -r '.source' <<< "$SELECTED")"
+
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "published_at=${PUBLISHED_AT}" >> "$GITHUB_OUTPUT"
+          echo "docker_tag=${DOCKER_TAG}" >> "$GITHUB_OUTPUT"
+          echo "stable upstream version: ${VERSION}"
+          echo "stable upstream published at: ${PUBLISHED_AT}"
+          echo "stable upstream source: ${SOURCE}"
+          echo "stable Docker tag: ${DOCKER_TAG}"
 
       - name: 检查稳定版是否需要构建
         id: stable_check
@@ -173,41 +183,6 @@ jobs:
 
           echo "need_build=${NEED}" >> "$GITHUB_OUTPUT"
 
-      - name: 获取测试版版本号
-        id: testing_version
-        run: |
-          RELEASES_JSON="$RUNNER_TEMP/testing-releases.json"
-          TAGS_JSON="$RUNNER_TEMP/testing-tags.json"
-          TAG_PUBLISHED_AT="$(TZ=Asia/Shanghai date +'%Y-%m-%dT%H:%M:%S+08:00')"
-
-          curl -fsSL \
-            -H "Accept: application/vnd.github+json" \
-            -H "Authorization: Bearer ${{ github.token }}" \
-            -H "X-GitHub-Api-Version: 2022-11-28" \
-            "https://api.github.com/repos/${{ env.UPSTREAM_RELEASES_REPO }}/releases?per_page=100" \
-            -o "$RELEASES_JSON"
-
-          curl -fsSL \
-            -H "Accept: application/vnd.github+json" \
-            -H "Authorization: Bearer ${{ github.token }}" \
-            -H "X-GitHub-Api-Version: 2022-11-28" \
-            "https://api.github.com/repos/${{ env.UPSTREAM_SOURCE_REPO }}/tags?per_page=100" \
-            -o "$TAGS_JSON"
-
-          SELECTED="$(bash scripts/select-upstream-version.sh testing "$RELEASES_JSON" "$TAGS_JSON" "$TAG_PUBLISHED_AT")"
-          VERSION="$(jq -r '.version' <<< "$SELECTED")"
-          PUBLISHED_AT="$(jq -r '.published_at' <<< "$SELECTED")"
-          DOCKER_TAG="$(jq -r '.docker_tag' <<< "$SELECTED")"
-          SOURCE="$(jq -r '.source' <<< "$SELECTED")"
-
-          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
-          echo "published_at=${PUBLISHED_AT}" >> "$GITHUB_OUTPUT"
-          echo "docker_tag=${DOCKER_TAG}" >> "$GITHUB_OUTPUT"
-          echo "testing upstream version: ${VERSION}"
-          echo "testing upstream published at: ${PUBLISHED_AT}"
-          echo "testing upstream source: ${SOURCE}"
-          echo "testing Docker tag: ${DOCKER_TAG}"
-
       - name: 读取测试版记录
         id: testing_local
         run: |
@@ -223,6 +198,51 @@ jobs:
 
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
           echo "published_at=${PUBLISHED_AT}" >> "$GITHUB_OUTPUT"
+
+      - name: 获取测试版版本号
+        id: testing_version
+        run: |
+          RELEASES_JSON="$RUNNER_TEMP/testing-releases.json"
+          TAGS_JSON="$RUNNER_TEMP/testing-tags.json"
+          TAG_PUBLISHED_AT="$(TZ=Asia/Shanghai date +'%Y-%m-%dT%H:%M:%S+08:00')"
+
+          curl -fsSL \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer ${{ github.token }}" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/${{ env.UPSTREAM_RELEASES_REPO }}/releases?per_page=100" \
+            -o "$RELEASES_JSON"
+
+          if SELECTED="$(bash scripts/select-upstream-version.sh testing "$RELEASES_JSON" "" "${{ steps.testing_local.outputs.version }}" "$TAG_PUBLISHED_AT")"; then
+            :
+          else
+            STATUS=$?
+            if [[ "$STATUS" -ne 3 ]]; then
+              exit "$STATUS"
+            fi
+
+            curl -fsSL \
+              -H "Accept: application/vnd.github+json" \
+              -H "Authorization: Bearer ${{ github.token }}" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "https://api.github.com/repos/${{ env.UPSTREAM_SOURCE_REPO }}/tags?per_page=100" \
+              -o "$TAGS_JSON"
+
+            SELECTED="$(bash scripts/select-upstream-version.sh testing "$RELEASES_JSON" "$TAGS_JSON" "${{ steps.testing_local.outputs.version }}" "$TAG_PUBLISHED_AT")"
+          fi
+
+          VERSION="$(jq -r '.version' <<< "$SELECTED")"
+          PUBLISHED_AT="$(jq -r '.published_at' <<< "$SELECTED")"
+          DOCKER_TAG="$(jq -r '.docker_tag' <<< "$SELECTED")"
+          SOURCE="$(jq -r '.source' <<< "$SELECTED")"
+
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "published_at=${PUBLISHED_AT}" >> "$GITHUB_OUTPUT"
+          echo "docker_tag=${DOCKER_TAG}" >> "$GITHUB_OUTPUT"
+          echo "testing upstream version: ${VERSION}"
+          echo "testing upstream published at: ${PUBLISHED_AT}"
+          echo "testing upstream source: ${SOURCE}"
+          echo "testing Docker tag: ${DOCKER_TAG}"
 
       - name: 检查测试版是否需要构建
         id: testing_check
