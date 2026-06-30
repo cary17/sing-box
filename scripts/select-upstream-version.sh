@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-CHANNEL="${1:?usage: select-upstream-version.sh <stable|testing> <releases-json> <tags-json> [tag-published-at]}"
-RELEASES_JSON="${2:?usage: select-upstream-version.sh <stable|testing> <releases-json> <tags-json> [tag-published-at]}"
-TAGS_JSON="${3:?usage: select-upstream-version.sh <stable|testing> <releases-json> <tags-json> [tag-published-at]}"
-TAG_PUBLISHED_AT="${4:-2026-06-29T00:00:00+08:00}"
+CHANNEL="${1:?usage: select-upstream-version.sh <stable|testing> <releases-json> [tags-json] [local-version] [tag-published-at]}"
+RELEASES_JSON="${2:?usage: select-upstream-version.sh <stable|testing> <releases-json> [tags-json] [local-version] [tag-published-at]}"
+TAGS_JSON="${3:-}"
+LOCAL_VERSION="${4:-}"
+TAG_PUBLISHED_AT="${5:-2026-06-29T00:00:00+08:00}"
 
 case "$CHANNEL" in
   stable)
@@ -53,36 +54,53 @@ beijing_time() {
   TZ=Asia/Shanghai date -d "$1" +'%Y-%m-%dT%H:%M:%S+08:00'
 }
 
-best_key=""
-best_published_at=""
-best_source=""
-best_version=""
+release_entry="$(
+  jq -r ".[] | ${RELEASE_FILTER} | [.tag_name, (.published_at // .created_at)] | @tsv" "$RELEASES_JSON" |
+    while IFS=$'\t' read -r tag published_at; do
+      [[ -n "$tag" ]] || continue
+      printf '%s\t%s\t%s\n' "$(version_key "$tag")" "$(beijing_time "$published_at")" "$tag"
+    done |
+    sort -t $'\t' -k1,1 -k2,2 |
+    tail -n 1
+)"
 
-consider_candidate() {
-  local tag="$1"
-  local published_at="$2"
-  local source="$3"
-  local key
-
-  [[ -n "$tag" ]] || return 0
-  key="$(version_key "$tag")"
-
-  if [[ -z "$best_key" || "$key" > "$best_key" || ( "$key" == "$best_key" && "$published_at" > "$best_published_at" ) ]]; then
-    best_key="$key"
-    best_published_at="$published_at"
-    best_source="$source"
-    best_version="$tag"
+if [[ -n "$release_entry" ]]; then
+  release_version="$(cut -f3 <<< "$release_entry")"
+  release_published_at="$(cut -f2 <<< "$release_entry")"
+  if [[ -z "$LOCAL_VERSION" || "$(version_key "$release_version")" > "$(version_key "$LOCAL_VERSION")" ]]; then
+    version="$release_version"
+    published_at="$release_published_at"
+    source="release"
+    docker_tag="${version%%-reF1nd*}"
+    jq -n \
+      --arg version "$version" \
+      --arg published_at "$published_at" \
+      --arg docker_tag "$docker_tag" \
+      --arg source "$source" \
+      '{
+        version: $version,
+        published_at: $published_at,
+        docker_tag: $docker_tag,
+        source: $source
+      }'
+    exit 0
   fi
-}
+fi
 
-while IFS=$'\t' read -r tag published_at; do
-  [[ -n "$tag" ]] || continue
-  consider_candidate "$tag" "$(beijing_time "$published_at")" "release"
-done < <(jq -r ".[] | ${RELEASE_FILTER} | [.tag_name, (.published_at // .created_at)] | @tsv" "$RELEASES_JSON")
+if [[ -z "$TAGS_JSON" ]]; then
+  exit 3
+fi
+
+best_key=""
+best_version=""
 
 while IFS= read -r tag; do
   [[ -n "$tag" ]] || continue
-  consider_candidate "$tag" "$TAG_PUBLISHED_AT" "tag"
+  key="$(version_key "$tag")"
+  if [[ -z "$best_key" || "$key" > "$best_key" ]]; then
+    best_key="$key"
+    best_version="$tag"
+  fi
 done < <(jq -r ".[] | .name | select(${TAG_FILTER})" "$TAGS_JSON")
 
 if [[ -z "$best_version" ]]; then
@@ -91,8 +109,8 @@ if [[ -z "$best_version" ]]; then
 fi
 
 version="$best_version"
-published_at="$best_published_at"
-source="$best_source"
+published_at="$TAG_PUBLISHED_AT"
+source="tag"
 docker_tag="${version%%-reF1nd*}"
 
 jq -n \
