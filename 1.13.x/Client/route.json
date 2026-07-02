@@ -32,18 +32,6 @@
         "outbound": "HK"
       },
       {
-        "domain_suffix": [
-          "okemby.org",
-          "emby.my",
-          "nebula-media.org",
-          "shrekmedia.org",
-          "191920.xyz",
-          "cn2gias.uk",
-          "ciallo.party",
-          "28.al",
-          "zn.al",
-          "mobaiemby.site"
-        ],
         "rule_set": [
           "Twitch",
           "Bahamut"
